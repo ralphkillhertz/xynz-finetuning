@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""
+🧪 TEST: Concentración Independiente con Sistema de Deltas
+"""
+
+import os
+import sys
+import numpy as np
+
+# Path setup
+current_dir = os.getcwd()
+if 'trajectory_hub' in current_dir:
+    parent_dir = os.path.dirname(current_dir)
+    sys.path.insert(0, parent_dir)
+
+from trajectory_hub.core.enhanced_trajectory_engine import EnhancedTrajectoryEngine
+
+print("""
+================================================================================
+🧪 TEST DE CONCENTRACIÓN CON SISTEMA DE DELTAS
+================================================================================
+""")
+
+# Deshabilitar OSC para test
+os.environ['DISABLE_OSC'] = '1'
+
+try:
+    # Crear engine
+    engine = EnhancedTrajectoryEngine(max_sources=8, fps=60)
+    
+    # Test 1: Concentración SIN trayectorias IS
+    print("TEST 1: Concentración sin trayectorias IS")
+    print("-" * 50)
+    
+    # Crear macro simple
+    macro_id = engine.create_macro("test_concentration", source_count=4, formation="grid", spacing=6.0)
+    
+    # Verificar posiciones iniciales
+    positions_before = []
+    for sid in engine._macros[macro_id].source_ids:
+        pos = engine._source_motions[sid].state.position.copy()
+        positions_before.append(pos)
+        print(f"Fuente {sid}: {pos}")
+    
+    # Calcular dispersión inicial
+    center_before = np.mean(positions_before, axis=0)
+    dispersion_before = np.mean([np.linalg.norm(p - center_before) for p in positions_before])
+    print(f"\nCentro: {center_before}")
+    print(f"Dispersión inicial: {dispersion_before:.2f}")
+    
+    # Aplicar concentración
+    print("\n🎯 Aplicando concentración (factor=0.8)...")
+    engine.set_macro_concentration(macro_id, 0.8)
+    
+    # Verificar que se crearon los componentes
+    for sid in engine._macros[macro_id].source_ids:
+        motion = engine._source_motions[sid]
+        if 'concentration' in motion.motion_components:
+            print(f"✅ Componente de concentración creado para fuente {sid}")
+            print(f"   use_delta_system: {motion.use_delta_system}")
+    
+    # Ejecutar varios frames
+    print("\n🔄 Ejecutando 60 frames...")
+    for i in range(60):
+        engine.update(1/60)
+        if i % 20 == 0:
+            # Verificar progreso
+            pos = engine._source_motions[engine._macros[macro_id].source_ids[0]].state.position
+            dist = np.linalg.norm(pos - center_before)
+            print(f"   Frame {i}: distancia al centro = {dist:.2f}")
+    
+    # Verificar resultado
+    print("\n📊 RESULTADO:")
+    positions_after = []
+    for sid in engine._macros[macro_id].source_ids:
+        pos = engine._source_motions[sid].state.position
+        positions_after.append(pos)
+        print(f"Fuente {sid}: {pos}")
+    
+    center_after = np.mean(positions_after, axis=0)
+    dispersion_after = np.mean([np.linalg.norm(p - center_after) for p in positions_after])
+    
+    print(f"\nDispersión final: {dispersion_after:.2f}")
+    print(f"Reducción: {((dispersion_before - dispersion_after) / dispersion_before * 100):.1f}%")
+    
+    # Verificar que hubo movimiento
+    total_movement = sum(np.linalg.norm(p1 - p2) for p1, p2 in zip(positions_before, positions_after))
+    
+    if total_movement > 0.1 and dispersion_after < dispersion_before:
+        print("\n✅ ¡CONCENTRACIÓN FUNCIONA SIN TRAYECTORIAS IS!")
+    else:
+        print("\n❌ La concentración no funcionó correctamente")
+        
+    # Test 2: Verificar que no interfiere con otros componentes
+    print("\n\nTEST 2: Independencia de componentes")
+    print("-" * 50)
+    
+    # Aplicar trayectoria macro
+    print("Aplicando trayectoria circular al macro...")
+    engine.set_macro_trajectory(macro_id, "circle", speed=0.5)
+    
+    # La concentración debe seguir funcionando
+    print("Verificando que concentración sigue activa...")
+    for i in range(30):
+        engine.update(1/60)
+    
+    # Verificar que siguen concentradas mientras se mueven
+    positions_moving = []
+    for sid in engine._macros[macro_id].source_ids:
+        pos = engine._source_motions[sid].state.position
+        positions_moving.append(pos)
+    
+    center_moving = np.mean(positions_moving, axis=0)
+    dispersion_moving = np.mean([np.linalg.norm(p - center_moving) for p in positions_moving])
+    
+    print(f"\nDispersión con movimiento: {dispersion_moving:.2f}")
+    print(f"Centro se movió: {np.linalg.norm(center_moving - center_after):.2f}")
+    
+    if dispersion_moving < dispersion_before * 0.5 and np.linalg.norm(center_moving - center_after) > 0.1:
+        print("\n✅ ¡CONCENTRACIÓN Y MOVIMIENTO FUNCIONAN EN PARALELO!")
+    else:
+        print("\n⚠️  Verificar interacción entre componentes")
+
+except Exception as e:
+    print(f"\n❌ Error durante el test: {e}")
+    import traceback
+    traceback.print_exc()
+
+print("""
+================================================================================
+✅ TEST COMPLETADO
+================================================================================
+""")

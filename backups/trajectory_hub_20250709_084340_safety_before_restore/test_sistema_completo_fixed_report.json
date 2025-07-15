@@ -1,0 +1,17 @@
+{
+  "timestamp": "2025-07-08T20:49:28.304942",
+  "test_results": {
+    "tests_passed": 0,
+    "tests_failed": 7,
+    "components": {
+      "ConcentrationComponent": "\u274c ERROR: 'dict' object has no attribute 'append'",
+      "IndividualTrajectory": "\u274c ERROR: unsupported operand type(s) for *: 'float' and 'MotionState'",
+      "MacroTrajectory": "\u274c ERROR: unsupported operand type(s) for *: 'float' and 'MotionState'",
+      "MacroRotation": "\u274c ERROR: unsupported operand type(s) for *: 'float' and 'MotionState'",
+      "ManualMacroRotation": "\u274c ERROR: unsupported operand type(s) for *: 'float' and 'MotionState'",
+      "IndividualRotation": "\u274c ERROR: ID 15 excede el m\u00e1ximo de fuentes (10)",
+      "ManualIndividualRotation": "\u274c ERROR: ID 16 excede el m\u00e1ximo de fuentes (10)"
+    }
+  },
+  "system_status": "NEEDS_ATTENTION"
+}

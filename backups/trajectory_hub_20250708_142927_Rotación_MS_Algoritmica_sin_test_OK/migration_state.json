@@ -1,0 +1,7 @@
+{
+  "individual_trajectory": "\u2705 Migrado a deltas (funcional)",
+  "engine_update": "\u274c Necesita procesar deltas autom\u00e1ticamente",
+  "macro_trajectory": "\u274c Pendiente migraci\u00f3n",
+  "rotation_ms": "\u274c Pendiente",
+  "rotation_is": "\u274c Pendiente"
+}

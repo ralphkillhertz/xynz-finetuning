@@ -1,0 +1,129 @@
+ANÁLISIS DETALLADO DE ConcentrationComponent
+================================================================================
+
+CLASE COMPLETA:
+----------------------------------------
+ 965: class ConcentrationComponent(MotionComponent):
+ 966:     """
+ 967:     Componente que maneja la concentración/dispersión de fuentes
+ 968:     Se aplica como último paso después de todos los demás movimientos
+ 969:     """
+ 970:     
+ 971:     def __init__(self):
+ 972:         super().__init__("concentration")
+ 973:         
+ 974:         # Parámetros principales
+ 975:         self.factor = 1.0  # 0=concentrado, 1=disperso
+ 976:         self.target_point = np.zeros(3)
+ 977:         self.mode = ConcentrationMode.FIXED_POINT
+ 978:         
+ 979:         # Control de animación
+ 980:         self.animation_active = False
+ 981:         self.animation_start_factor = 1.0
+ 982:         self.animation_target_factor = 0.0
+ 983:         self.animation_duration = 2.0
+ 984:         self.animation_elapsed = 0.0
+ 985:         self.animation_curve = ConcentrationCurve.EASE_IN_OUT
+ 986:         
+ 987:         # Parámetros avanzados
+ 988:         self.include_macro_trajectory = True
+ 989:         self.attenuate_rotations = True
+ 990:         self.attenuate_modulations = True
+ 991:         self.concentration_order = "uniform"
+ 992:         
+ 993:         # Cache
+ 994:         self._macro_center = np.zeros(3)
+ 995:         self._source_distances = {}
+ 996:         
+ 997:     def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+ 998:         """Actualizar el componente de concentración"""
+ 999:         if not self.enabled:
+1000:             return state
+1001:             
+1002:         # Actualizar animación
+1003:         if self.animation_active:
+1004:             self.animation_elapsed += dt
+1005:             progress = min(self.animation_elapsed / self.animation_duration, 1.0)
+1006:             
+1007:             # Aplicar curva
+1008:             curved_progress = self._apply_curve(progress, self.animation_curve)
+1009:             
+1010:             # Interpolar factor
+1011:             self.factor = self.animation_start_factor + \
+1012:                          (self.animation_target_factor - self.animation_start_factor) * curved_progress
+1013:             
+1014:             if progress >= 1.0:
+1015:                 self.animation_active = False
+1016:                 
+1017:         # No hacer nada si completamente disperso
+1018:         if abs(self.factor - 1.0) < 0.001:
+1019:             return state
+1020:             
+1021:         # Calcular punto objetivo
+1022:         if self.mode == ConcentrationMode.FOLLOW_MACRO:
+1023:             target = self._macro_center + self.target_point
+1024:         else:
+1025:             target = self.target_point
+1026:             
+1027:         # Aplicar concentración
+1028:         concentration_strength = 1.0 - self.factor
+1029:         state.position = self._lerp(state.position, target, concentration_strength)
+1030:         
+1031:         # Atenuar velocidad
+1032:         state.velocity *= self.factor
+1033:         
+1034:         # Atenuar orientación si está habilitado
+1035:         if self.attenuate_rotations:
+1036:             state.orientation *= self.factor
+1037:             
+1038:         return state
+1039:         
+1040:     def start_animation(self, target_factor: float, duration: float, 
+1041:                        curve: ConcentrationCurve = ConcentrationCurve.EASE_IN_OUT):
+1042:         """Iniciar animación de concentración"""
+1043:         self.animation_start_factor = self.factor
+1044:         self.animation_target_factor = max(0.0, min(1.0, target_factor))
+1045:         self.animation_duration = max(0.1, duration)
+1046:         self.animation_elapsed = 0.0
+1047:         self.animation_curve = curve
+1048:         self.animation_active = True
+1049:         self.enabled = True
+1050:         
+1051:     def set_factor(self, factor: float):
+1052:         """Establecer factor inmediatamente"""
+1053:         self.factor = max(0.0, min(1.0, factor))
+1054:         self.animation_active = False
+1055:         self.enabled = True
+1056:         
+1057:     def update_macro_center(self, center: np.ndarray):
+1058:         """Actualizar centro del macro"""
+1059:         self._macro_center = center.copy()
+1060:         
+1061:     def _lerp(self, a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
+1062:         """Interpolación lineal"""
+1063:         return a + (b - a) * t
+1064:         
+1065:     def _apply_curve(self, t: float, curve: ConcentrationCurve) -> float:
+1066:         """Aplicar curva de animación"""
+1067:         if curve == ConcentrationCurve.LINEAR:
+1068:             return t
+1069:         elif curve == ConcentrationCurve.EASE_IN:
+1070:             return t * t
+1071:         elif curve == ConcentrationCurve.EASE_OUT:
+1072:             return 1 - (1 - t) * (1 - t)
+1073:         elif curve == ConcentrationCurve.EASE_IN_OUT:
+1074:             if t < 0.5:
+1075:                 return 2 * t * t
+1076:             else:
+1077:                 return 1 - 2 * (1 - t) * (1 - t)
+1078:         elif curve == ConcentrationCurve.EXPONENTIAL:
+1079:             return t * t * t
+1080:         elif curve == ConcentrationCurve.BOUNCE:
+1081:             if t < 0.5:
+1082:                 return 4 * t * t * t
+1083:             else:
+1084:                 p = 2 * t - 2
+1085:                 return 1 + p * p * p / 2
+1086:         return t
+1087: 
+1088: 

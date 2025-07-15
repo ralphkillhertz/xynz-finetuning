@@ -1,0 +1,62 @@
+{
+  "stats": {
+    "total_methods": 38,
+    "menu_methods": 7,
+    "action_methods": 1,
+    "helper_methods": 30,
+    "broken_methods": 0
+  },
+  "issues": {
+    "_show_current_menu": [
+      "No imprime opciones",
+      "No lee input del usuario"
+    ],
+    "_show_main_menu": [
+      "No imprime opciones",
+      "No lee input del usuario"
+    ],
+    "_show_movement_menu": [
+      "No imprime opciones",
+      "No lee input del usuario"
+    ],
+    "_show_delta_menu": [
+      "No imprime opciones",
+      "No lee input del usuario"
+    ],
+    "_show_modulation_menu": [
+      "No imprime opciones",
+      "No lee input del usuario"
+    ],
+    "_show_presets_menu": [
+      "No imprime opciones",
+      "No lee input del usuario"
+    ],
+    "_show_system_menu": [
+      "No imprime opciones",
+      "No lee input del usuario"
+    ],
+    "imports": [
+      "Falta import de CommandProcessor"
+    ],
+    "init": [
+      "No inicializa CommandProcessor"
+    ],
+    "architecture": [
+      "Demasiados m\u00e9todos: 38 (m\u00e1ximo recomendado: 25)",
+      "Posible l\u00f3gica de negocio en l\u00ednea 90: def _process_choice(self, choice: str):",
+      "Posible l\u00f3gica de negocio en l\u00ednea 205: def _process_main_choice(self, choice: str):",
+      "Posible l\u00f3gica de negocio en l\u00ednea 218: def _process_movement_choice(self, choice: str):",
+      "Posible l\u00f3gica de negocio en l\u00ednea 237: def _process_delta_choice(self, choice: str):",
+      "Posible l\u00f3gica de negocio en l\u00ednea 253: def _process_modulation_choice(self, choice: str):",
+      "Posible l\u00f3gica de negocio en l\u00ednea 269: def _process_presets_choice(self, choice: str):",
+      "Posible l\u00f3gica de negocio en l\u00ednea 287: def _process_system_choice(self, choice: str):"
+    ]
+  },
+  "fixes_needed": [
+    "A\u00f1adir import CommandProcessor",
+    "Inicializar CommandProcessor en __init__",
+    "Reemplazar 2 llamadas directas a Engine",
+    "Reducir de 38 a 25 m\u00e9todos m\u00e1ximo"
+  ],
+  "critical_count": 2
+}

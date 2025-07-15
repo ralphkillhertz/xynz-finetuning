@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""
+📊 ANÁLISIS: Por qué Trayectoria MS bloquea Concentración
+🔍 Investigación del conflicto de movimientos
+📝 Documento para informe final
+"""
+
+def analyze_ms_trajectory_blocking():
+    """Analizar por qué trayectoria MS impide concentración"""
+    
+    print("📊 ANÁLISIS: TRAYECTORIA MS vs CONCENTRACIÓN")
+    print("="*60)
+    
+    print("\n🔍 ESCENARIO:")
+    print("""
+    1. Usuario crea un Macro con 4 fuentes
+    2. Aplica trayectoria circular MS (las 4 fuentes giran juntas)
+    3. Aplica concentración 0.5 (deberían acercarse mientras giran)
+    4. RESULTADO: Solo giran, NO se concentran
+    """)
+    
+    print("\n❌ CAUSA RAÍZ: Sobrescritura secuencial")
+    print("""
+    En el método step() actual:
+    
+    1. PRIMERO: Trayectoria MS calcula nueva posición
+       → positions[0] = trajectory.get_position(t)
+       → positions[0] = [10, 0, 0]  # Punto en el círculo
+       
+    2. DESPUÉS: Concentración intenta modificar
+       → direction = center - positions[0]
+       → movement = direction * factor * dt
+       
+    3. PROBLEMA: ¿Dónde se aplica?
+       
+       Opción A - Se suma (NO implementado):
+       positions[0] += movement  ❌ No existe este código
+       
+       Opción B - Se reemplaza (NO implementado):
+       positions[0] = positions[0] + movement  ❌ Tampoco existe
+       
+       Realidad - Trayectoria MS ya escribió la posición final:
+       positions[0] = [10, 0, 0]  ✅ Esto es lo que queda
+    """)
+    
+    print("\n📋 FLUJO DE EJECUCIÓN ACTUAL:")
+    print("""
+    step() {
+        // 1. Actualizar trayectorias MS
+        for macro in macros:
+            if macro.has_trajectory:
+                for source in macro.sources:
+                    positions[source] = trajectory.calculate(time)  // SOBRESCRIBE
+                    
+        // 2. Intentar aplicar concentración
+        for macro in macros:
+            if macro.concentration_factor > 0:
+                // Este código NO EXISTE o NO SE EJECUTA
+                // porque las posiciones ya fueron escritas
+        
+        // 3. Enviar a OSC
+        send_positions()  // Envía las posiciones de trayectoria MS
+    }
+    """)
+    
+    print("\n🔬 EVIDENCIA:")
+    print("""
+    1. En el análisis anterior:
+       - set_macro_concentration existe ✅
+       - Pero NO guarda el factor (returns None) ❌
+       - step() NO contiene 'concentration_factor' ❌
+       
+    2. Esto significa:
+       - La concentración nunca se calcula
+       - Solo se ejecuta la trayectoria MS
+       - Las posiciones finales son 100% de la trayectoria
+    """)
+    
+    print("\n💡 POR QUÉ PASA ESTO:")
+    print("""
+    ARQUITECTURA SECUENCIAL:
+    ├── Trayectoria MS escribe posición
+    ├── Rotación MS escribe posición (sobrescribe anterior)
+    ├── Trayectoria IS escribe posición (sobrescribe anterior)
+    └── Concentración... no está implementada
+    
+    Cada componente REEMPLAZA en lugar de CONTRIBUIR
+    """)
+    
+    return True
+
+def analyze_why_deltas_solve_this():
+    """Explicar por qué el sistema de deltas resuelve esto"""
+    
+    print("\n\n🎯 SOLUCIÓN: Sistema de Deltas")
+    print("="*60)
+    
+    print("\n📐 MATEMÁTICA DEL PROBLEMA:")
+    print("""
+    SISTEMA ACTUAL (Secuencial):
+    P(t) = último_componente_que_escribió
+    
+    SISTEMA CORRECTO (Deltas):
+    P(t) = P₀ + ΔTrayectoria + ΔRotación + ΔConcentración
+    
+    Donde:
+    - P₀ = Posición base
+    - ΔTrayectoria = Movimiento de la trayectoria
+    - ΔRotación = Ajuste por rotación
+    - ΔConcentración = Vector hacia el centro * factor
+    """)
+    
+    print("\n🔄 EJEMPLO NUMÉRICO:")
+    print("""
+    Fuente en posición [0, 0, 0]
+    
+    Con sistema SECUENCIAL:
+    1. Trayectoria MS → P = [10, 0, 0]  (círculo radio 10)
+    2. Concentración → (no se aplica, ya se escribió P)
+    Resultado: [10, 0, 0] ❌ No hay concentración
+    
+    Con sistema de DELTAS:
+    1. P₀ = [0, 0, 0]
+    2. ΔTrayectoria = [10, 0, 0]  (hacia punto del círculo)
+    3. ΔConcentración = [-3, 0, 0]  (hacia centro, factor 0.3)
+    4. P = [0,0,0] + [10,0,0] + [-3,0,0] = [7, 0, 0]
+    Resultado: [7, 0, 0] ✅ Círculo más pequeño!
+    """)
+    
+    print("\n📊 VENTAJAS DEL SISTEMA DE DELTAS:")
+    print("""
+    1. COMPOSICIÓN: Todos los movimientos se suman
+    2. INDEPENDENCIA: Cada componente ignora los otros
+    3. CONFIGURABILIDAD: Pesos ajustables por componente
+    4. EXTENSIBILIDAD: Fácil agregar nuevos componentes
+    5. PREDECIBILIDAD: El resultado es la suma de partes
+    """)
+
+def create_analysis_report():
+    """Crear informe de análisis"""
+    
+    report = f"""
+# INFORME DE ANÁLISIS: Sistema de Movimiento Trajectory Hub
+Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+
+## 1. PROBLEMA IDENTIFICADO: Concentración No Funcional
+
+### 1.1 Síntomas
+- La concentración no produce movimiento cuando se aplica sola
+- La concentración no funciona cuando hay trayectoria MS activa
+- Otros movimientos se bloquean mutuamente
+
+### 1.2 Causa Raíz
+**Arquitectura Secuencial con Sobrescritura**
+
+El sistema actual utiliza asignaciones directas:
+```python
+self._positions[sid] = calculated_position

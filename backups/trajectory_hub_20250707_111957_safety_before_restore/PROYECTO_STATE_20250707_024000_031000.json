@@ -1,0 +1,128 @@
+{
+  "session_id": "20250707_024000_031000",
+  "project": "trajectory_hub",
+  "status": "CRITICAL_ISSUE",
+  "completion": "98%",
+  
+  "problema_principal": {
+    "descripcion": "Concentración no funciona - fuentes no se mueven",
+    "diagnostico_confirmado": {
+      "offsets_calculados": "CORRECTO ✅",
+      "offsets_magnitud": "1.2728 (correcto)",
+      "posiciones_manuales": "CORRECTAS ✅",
+      "posiciones_actuales": "NO SE ACTUALIZAN ❌",
+      "get_position_existe": "SÍ pero no se llama",
+      "step_existe": "SÍ",
+      "update_existe": "SÍ"
+    }
+  },
+  
+  "intentos_de_fix": [
+    {
+      "nombre": "create_or_fix_step_method",
+      "resultado": "step() existe pero no actualiza",
+      "archivo": "enhanced_trajectory_engine.py"
+    },
+    {
+      "nombre": "diagnose_and_fix_sourcemotion",
+      "resultado": "get_position() añadido pero hasattr devuelve False",
+      "archivo": "motion_components.py"
+    },
+    {
+      "nombre": "fix_concentration_calculation",
+      "resultado": "set_macro_concentration calcula offsets correctamente",
+      "archivo": "enhanced_trajectory_engine.py"
+    },
+    {
+      "nombre": "fix_step_apply_offsets",
+      "resultado": "No encontró step() con regex",
+      "archivo": "enhanced_trajectory_engine.py"
+    },
+    {
+      "nombre": "find_and_fix_real_step",
+      "resultado": "Encontró update() en línea 1168, modificó línea 1253",
+      "archivo": "enhanced_trajectory_engine.py"
+    },
+    {
+      "nombre": "fix_line_1253_directly",
+      "resultado": "Línea 1253 ya tenía código pero no funciona",
+      "archivo": "enhanced_trajectory_engine.py"
+    },
+    {
+      "nombre": "final_fix_concentration",
+      "resultado": "Aplicó fix en línea 1270 pero no funciona",
+      "archivo": "enhanced_trajectory_engine.py"
+    },
+    {
+      "nombre": "aggressive_concentration_fix",
+      "resultado": "ERROR SINTAXIS línea 1311",
+      "error": "self._positions[sid] = _temp_pos center_pos.copy()",
+      "archivo": "enhanced_trajectory_engine.py"
+    }
+  ],
+  
+  "estado_actual_archivos": {
+    "enhanced_trajectory_engine.py": {
+      "estado": "ROTO - Error sintaxis línea 1311",
+      "backups": [
+        "enhanced_trajectory_engine.py.backup_20250707_024215",
+        "enhanced_trajectory_engine.py.backup_20250707_024610", 
+        "enhanced_trajectory_engine.py.backup_update_20250707_025357",
+        "enhanced_trajectory_engine.py.backup_final_20250707_030559",
+        "enhanced_trajectory_engine.py.backup_aggressive_20250707_030800"
+      ],
+      "necesita": "RESTAURAR desde backup y aplicar fix correcto"
+    },
+    "motion_components.py": {
+      "estado": "Modificado con get_position()",
+      "backups": [
+        "motion_components.py.backup_20250707_024406"
+      ],
+      "problema": "get_position existe pero hasattr() devuelve False"
+    }
+  },
+  
+  "hallazgos_clave": {
+    "offsets_calculados": {
+      "fuente_0": "[0.9, 0.9, 0.0]",
+      "fuente_1": "[-0.9, 0.9, 0.0]", 
+      "fuente_2": "[0.9, -0.9, 0.0]",
+      "fuente_3": "[-0.9, -0.9, 0.0]",
+      "magnitud": "1.2728"
+    },
+    "posiciones_esperadas_vs_actuales": {
+      "fuente_0": {
+        "inicial": "[-6, -6, 0]",
+        "esperada": "[-5.1, -5.1, 0]",
+        "actual": "[-6, -6, 0]"
+      }
+    },
+    "lineas_criticas": {
+      "update_method": "línea 1168",
+      "positions_assignment": "línea 1270 (antes 1253)",
+      "error_actual": "línea 1311"
+    }
+  },
+  
+  "solucion_propuesta_proxima_sesion": {
+    "paso_1": "Restaurar desde backup antes del error",
+    "paso_2": "Aplicar fix simple y directo en update()",
+    "paso_3": "Verificar que step() llame a update()",
+    "paso_4": "Si falla, override step() completamente",
+    "codigo_exacto": "En línea ~1270: self._positions[sid] = motion.state.position + motion.concentration_offset"
+  },
+  
+  "comandos_inicio_proxima_sesion": [
+    "cd trajectory_hub",
+    "cp enhanced_trajectory_engine.py.backup_final_20250707_030559 enhanced_trajectory_engine.py",
+    "python test_concentration_working.py"
+  ],
+  
+  "notas_importantes": {
+    "1": "Los offsets SE CALCULAN correctamente",
+    "2": "El problema está en la APLICACIÓN de offsets a _positions",
+    "3": "get_position() existe pero no se reconoce con hasattr()",
+    "4": "Necesitamos aplicación DIRECTA sin depender de métodos",
+    "5": "El fix agresivo rompió la sintaxis - evitar regex complejos"
+  }
+}

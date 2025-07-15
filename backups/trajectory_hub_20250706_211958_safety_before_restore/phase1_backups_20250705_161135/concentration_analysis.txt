@@ -1,0 +1,37 @@
+ConcentrationComponent Analysis
+==================================================
+Methods: ['__init__', 'update', 'start_animation', 'set_factor', 'update_macro_center', '_lerp', '_apply_curve']
+Has apply: False
+IS dependency: False
+
+Class content preview:
+class ConcentrationComponent(MotionComponent):
+    """
+    Componente que maneja la concentración/dispersión de fuentes
+    Se aplica como último paso después de todos los demás movimientos
+    """
+    
+    def __init__(self):
+        super().__init__("concentration")
+        
+        # Parámetros principales
+        self.factor = 1.0  # 0=concentrado, 1=disperso
+        self.target_point = np.zeros(3)
+        self.mode = ConcentrationMode.FIXED_POINT
+        
+        # Control de animación
+        self.animation_active = False
+        self.animation_start_factor = 1.0
+        self.animation_target_factor = 0.0
+        self.animation_duration = 2.0
+        self.animation_elapsed = 0.0
+        self.animation_curve = ConcentrationCurve.EASE_IN_OUT
+        
+        # Parámetros avanzados
+        self.include_macro_trajectory = True
+        self.attenuate_rotations = True
+        self.attenuate_modulations = True
+        self.concentration_order = "uniform"
+        
+        # Cache
+       ...

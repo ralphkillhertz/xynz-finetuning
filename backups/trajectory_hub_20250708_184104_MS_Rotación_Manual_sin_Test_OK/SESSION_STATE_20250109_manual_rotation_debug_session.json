@@ -1,0 +1,133 @@
+{
+  "session_id": "20250109_manual_rotation_debug_session",
+  "timestamp": "2025-01-09T16:45:00",
+  "project": "trajectory_hub",
+  "phase": "manual_rotation_ms_debugging",
+  "status": "ManualMacroRotation con bug en algoritmo de rotación",
+  
+  "trabajo_realizado": {
+    "objetivo_sesion": "Completar y verificar rotaciones manuales MS",
+    "duracion": "~2 horas",
+    
+    "problemas_encontrados": [
+      {
+        "problema": "Parámetros incorrectos en tests",
+        "sintoma": "target_yaw no existe, esperaba grados no radianes",
+        "solucion": "Corregido a: yaw=math.pi/2, pitch, roll, interpolation_speed",
+        "estado": "✅ RESUELTO"
+      },
+      {
+        "problema": "calculate_delta retornaba None para algunas posiciones",
+        "sintoma": "Fuentes con X=0 no se movían",
+        "causa": "Condición 'if np.linalg.norm(delta.position) < 0.0001: return None'",
+        "solucion": "Comentadas líneas 1153-1155",
+        "estado": "✅ RESUELTO"
+      },
+      {
+        "problema": "Algoritmo de rotación incorrecto",
+        "sintoma": "Fuentes 1,3 no se mueven (delta [0,0,0]), Fuentes 0,2 se mueven 432 unidades con valores Z incorrectos",
+        "causa": "El cálculo de rotación no maneja correctamente todos los casos",
+        "solucion": "Necesita reescribir calculate_delta con ángulos polares",
+        "estado": "❌ PENDIENTE"
+      }
+    ],
+    
+    "archivos_modificados": [
+      "motion_components.py - Líneas 1153-1155 comentadas",
+      "test_rotation_simple.py - Parámetros corregidos",
+      "test_rotation_success.py - Parámetros corregidos",
+      "test_rotation_controlled.py - Creado para debug"
+    ],
+    
+    "scripts_creados": [
+      "fix_rotation_params.py",
+      "find_rotation_params.py",
+      "find_rotation_full_params.py",
+      "fix_rotation_tests.py",
+      "debug_rotation_issue.py",
+      "debug_calculate_delta.py",
+      "fix_manual_rotation_bug.py",
+      "fix_rotation_properly.py",
+      "investigate_rotation_deeper.py",
+      "fix_rotation_calculation.py"
+    ]
+  },
+  
+  "estado_actual": {
+    "manual_macro_rotation": {
+      "estructura": "✅ Clase implementada correctamente",
+      "parametros": "✅ Funcionan correctamente",
+      "calculate_delta": "❌ Algoritmo de rotación incorrecto",
+      "sintomas_actuales": [
+        "Fuentes con X=0: delta [0,0,0] - no se mueven",
+        "Fuentes con Y=0: se mueven excesivamente (432 unidades)",
+        "Aparecen valores Z incorrectos (debería ser 0 para rotación YAW)",
+        "NO es una rotación real - las distancias no se preservan"
+      ]
+    },
+    
+    "diagnostico_final": {
+      "problema_real": "El algoritmo de rotación está mal implementado",
+      "evidencia": {
+        "fuente_0": "[3,0,0] → [-278.52, 0, -328.91] (movió 432 unidades)",
+        "fuente_1": "[0,3,0] → [0,3,0] (no se movió)",
+        "fuente_2": "[-3,0,0] → [278.52, 0, 328.91] (movió 432 unidades)",
+        "fuente_3": "[0,-3,0] → [0,-3,0] (no se movió)"
+      },
+      "conclusion": "Esto NO es una rotación de 90°"
+    },
+    
+    "solucion_propuesta": {
+      "archivo": "manual_rotation_fix.txt",
+      "cambios_necesarios": [
+        "Usar ángulos polares (atan2) para manejar todas las posiciones",
+        "Rotación YAW solo afecta plano XY (Z sin cambios)",
+        "Preservar distancia al centro",
+        "Interpolación correcta del ángulo"
+      ],
+      "estado": "Código correcto generado, pendiente aplicar"
+    }
+  },
+  
+  "sistema_deltas_general": {
+    "arquitectura": "✅ 100% implementada",
+    "componentes_funcionales": {
+      "ConcentrationComponent": "✅ 100%",
+      "IndividualTrajectory": "✅ 100%",
+      "MacroTrajectory": "✅ 100%",
+      "MacroRotation": "✅ 95%",
+      "ManualMacroRotation": "⚠️ 80% - Bug en algoritmo"
+    },
+    "componentes_pendientes": {
+      "IndividualRotation": "❌ 0%",
+      "ManualIndividualRotation": "❌ 0%",
+      "OrientationModulation": "❌ 0%"
+    }
+  },
+  
+  "metricas_proyecto": {
+    "sistema_deltas": "85% completo (5/8 componentes, 1 con bug)",
+    "rotaciones": "40% completo (manual MS con bug, algorítmica MS ok)",
+    "servidor_mcp": "0% - NO INICIADO - CRÍTICO",
+    "modulador_3d": "0% - Documentación disponible",
+    "proyecto_total": "~63% completo (sin MCP), ~43% (con MCP)"
+  },
+  
+  "pendiente_inmediato": [
+    "1. Aplicar fix del algoritmo de rotación (manual_rotation_fix.txt)",
+    "2. Verificar que todas las fuentes roten correctamente",
+    "3. Confirmar que es una rotación real (distancias preservadas)",
+    "4. Guardar estado y continuar con rotaciones IS"
+  ],
+  
+  "comando_actual": "Aplicar manualmente el contenido de manual_rotation_fix.txt",
+  
+  "notas_importantes": {
+    "debug_rotation_final": "Confirmó que el sistema mueve las fuentes pero incorrectamente",
+    "api_correcta": {
+      "metodo": "set_manual_macro_rotation",
+      "parametros": "yaw, pitch, roll (radianes), interpolation_speed"
+    },
+    "siguiente_prioridad": "Corregir algoritmo, luego MCP Server"
+  }
+}

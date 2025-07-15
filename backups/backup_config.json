@@ -1,0 +1,12 @@
+{
+  "max_backups": 50,
+  "exclude_patterns": [
+    "__pycache__",
+    "*.pyc",
+    ".git",
+    ".DS_Store",
+    "*.log",
+    ".pytest_cache",
+    ".env"
+  ]
+}

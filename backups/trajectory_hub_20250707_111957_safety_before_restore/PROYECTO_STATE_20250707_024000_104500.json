@@ -1,0 +1,115 @@
+{
+  "session_id": "20250707_024000_104500",
+  "project": "trajectory_hub",
+  "status": "PARCIALMENTE_RESUELTO",
+  "completion": "90%",
+  
+  "problemas_resueltos": {
+    "concentracion": {
+      "estado": "RESUELTO ✅",
+      "solucion": "simple_direct_fix.py",
+      "descripcion": "step() calcula y aplica movimiento directamente sin usar offsets",
+      "resultado": "50% reducción de dispersión, fuentes convergen al centro",
+      "archivo_clave": "enhanced_trajectory_engine.py con step() modificado"
+    },
+    "comunicacion_osc": {
+      "estado": "PARCIAL ⚠️",
+      "solucion": "fix_osc_communication.py",
+      "descripcion": "OSC funciona, envía posiciones correctamente",
+      "problema_restante": "Creación de macros/grupos en Spat falla"
+    }
+  },
+  
+  "problemas_actuales": {
+    "macros_osc": {
+      "descripcion": "Los macros no se crean en Spat via OSC",
+      "errores": [
+        "can only concatenate str (not 'int') to str",
+        "'SpatOSCBridge' object has no attribute 'add_source_to_group'"
+      ],
+      "archivo": "spat_osc_bridge.py",
+      "linea_problema": "730 (create_group)"
+    }
+  },
+  
+  "archivos_modificados": {
+    "enhanced_trajectory_engine.py": {
+      "cambios": [
+        "step() reescrito para calcular concentración directamente",
+        "set_macro_concentration implementado",
+        "Código OSC añadido a step()",
+        "create_macro actualizado para enviar OSC"
+      ],
+      "backups_importantes": [
+        "enhanced_trajectory_engine.py.backup_simple_20250707_103351",
+        "enhanced_trajectory_engine.py.backup_osc_20250707_103830"
+      ]
+    },
+    "motion_components.py": {
+      "cambios": [
+        "get_position() añadido (pero no se usa)",
+        "get_orientation() y get_aperture() añadidos"
+      ],
+      "nota": "Los getters existen pero hasattr() devuelve False"
+    },
+    "spat_osc_bridge.py": {
+      "cambios": [
+        "create_group existe pero tiene error de tipos",
+        "add_source_to_group necesita ser añadido"
+      ],
+      "estado": "NECESITA_FIX"
+    }
+  },
+  
+  "solucion_concentracion_final": {
+    "metodo": "Cálculo directo en step()",
+    "codigo_clave": "new_pos = current_pos + (direction * factor * dt * 10.0)",
+    "ventajas": [
+      "No depende de concentration_offset que se resetea",
+      "No usa motion.update() que puede interferir",
+      "Actualiza _positions directamente",
+      "Multiplicador x10 para velocidad visible"
+    ]
+  },
+  
+  "configuracion_funcional": {
+    "engine": {
+      "max_sources": 32,
+      "fps": 60
+    },
+    "osc": {
+      "host": "127.0.0.1",
+      "port": 9000,
+      "formato_esperado": {
+        "crear_grupo": "/group/new [\"nombre\"]",
+        "asignar_fuente": "/source/X/group [\"nombre\"]",
+        "posicion": "/source/X/xyz [x, y, z]"
+      }
+    },
+    "concentracion": {
+      "factor_test": 0.8,
+      "velocidad": "dt * 10.0",
+      "resultado": "Converge correctamente al centro"
+    }
+  },
+  
+  "comandos_utiles": {
+    "test_concentracion": "python test_concentration_working.py",
+    "controlador": "python trajectory_hub/interface/interactive_controller.py",
+    "test_osc": "python test_controller_osc.py"
+  },
+  
+  "proxima_sesion": {
+    "prioridad_1": "Arreglar create_group y add_source_to_group en spat_osc_bridge.py",
+    "prioridad_2": "Verificar formato OSC específico de la versión de Spat",
+    "prioridad_3": "Optimizar velocidad de concentración si es necesario"
+  },
+  
+  "notas_importantes": {
+    "1": "La concentración FUNCIONA perfectamente",
+    "2": "NO usar DISABLE_OSC en ningún test",
+    "3": "El problema de offsets que se resetean se resolvió con cálculo directo",
+    "4": "hasattr() no funciona correctamente con get_position()",
+    "5": "Los backups aggressive y con errores de sintaxis deben evitarse"
+  }
+}

@@ -1,0 +1,1718 @@
+"""
+motion_components.py - Componentes de movimiento actualizados con modulador 3D avanzado
+"""
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Optional, Callable, Dict, List, Tuple
+import numpy as np
+from trajectory_hub.core.movement_modes import TrajectoryMovementMode
+from .movement_modes import MovementModeMixin, TrajectoryMovementMode
+import time
+import logging
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+
+
+
+# MotionDelta movido arriba
+
+
+# SourceMotion movido arriba
+
+# ===== CLASES BASE (ORDEN CORREGIDO) =====
+
+@dataclass
+class MotionState:
+    """Estado completo del movimiento de una fuente"""
+    position: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    orientation: np.ndarray = field(default_factory=lambda: np.zeros(3))  # yaw, pitch, roll
+    aperture: float = 0.5
+    
+    # Velocidades para interpolación suave
+    velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    angular_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    
+    # Timestamp para interpolación
+    last_update: float = 0.0
+
+
+
+# Enums para el sistema de concentración
+
+@dataclass
+class MotionDelta:
+    """Representa un cambio incremental en posición/orientación"""
+    source_id: int = 0
+    position: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    orientation: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    aperture: float = 0.0
+    weight: float = 1.0
+    source: str = ""
+    
+    def scale(self, factor: float) -> 'MotionDelta':
+        return MotionDelta(
+            position=self.position * factor,
+            orientation=self.orientation * factor,
+            aperture=self.aperture * factor,
+            weight=self.weight * factor,
+            source=self.source
+        )
+
+
+
+class MotionComponent(ABC):
+    """Componente base para todos los tipos de movimiento"""
+    
+    def __init__(self, name: str = ""):
+        self.name = name
+        self.enabled = True
+        self.weight = 1.0  # Para mezclar múltiples componentes
+        
+    @abstractmethod
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        """Actualizar el componente y devolver el estado modificado"""
+        pass
+        
+    def reset(self):
+        """Resetear el componente a su estado inicial"""
+        pass
+
+
+
+class SourceMotion:
+    """Gestiona el movimiento y componentes de una fuente"""
+    
+    def __init__(self, source_id: int):
+        self.source_id = source_id
+        self.id = source_id  # Alias para compatibilidad
+        self.state = MotionState()
+        self.position = np.zeros(3)
+        self.orientation = np.zeros(3)
+        
+        # Sistema antiguo (diccionario) para compatibilidad
+        self.components = {}
+        
+        # Sistema nuevo (lista) para deltas
+        self.active_components = {}
+        
+    def add_component(self, component, name=None):
+        """Añade un componente de movimiento"""
+        if component not in self.active_components:
+            self.active_components.append(component)
+            
+        # También añadir al diccionario si tiene nombre
+        if name:
+            self.components[name] = component
+            
+        """Elimina un componente"""
+        if component in self.active_components:
+            self.active_components.remove(component)
+            
+        # También eliminar del diccionario
+        for name, comp in list(self.components.items()):
+            if comp == component:
+                del self.components[name]
+                
+    def update(self, current_time: float, dt: float) -> MotionState:
+        """Actualiza todos los componentes y retorna el estado"""
+        # Actualizar componentes activos (sistema nuevo)
+        for component in self.active_components:
+            if hasattr(component, 'update'):
+                self.state = component.update(self.state, current_time, dt)
+                
+        # También actualizar componentes del diccionario (compatibilidad)
+        for name, component in self.components.items():
+            if component not in self.active_components and hasattr(component, 'update'):
+                self.state = component.update(self.state, current_time, dt)
+                
+        return self.state
+        
+    def update_with_deltas(self, current_time: float, dt: float) -> list:
+        """Actualiza componentes y retorna LISTA de deltas"""
+        deltas = []
+        
+        # active_components es un DICT
+        if isinstance(self.active_components, dict):
+            for name, component in self.active_components.items():
+                if component and hasattr(component, 'enabled') and component.enabled:
+                    if hasattr(component, 'calculate_delta'):
+                        delta = component.calculate_delta(self.state, current_time, dt)
+                        if delta and delta.position is not None:
+                            deltas.append(delta)
+        
+        return deltas
+
+class ConcentrationMode(Enum):
+    """Modos de concentración"""
+    FIXED_POINT = "fixed_point"      # Punto fijo en el espacio
+    FOLLOW_MACRO = "follow_macro"    # Sigue la trayectoria macro
+    DYNAMIC = "dynamic"              # Punto calculado dinámicamente
+
+class ConcentrationCurve(Enum):
+    """Curvas de transición"""
+    LINEAR = "linear"
+    EASE_IN = "ease_in"
+    EASE_OUT = "ease_out"
+    EASE_IN_OUT = "ease_in_out"
+    EXPONENTIAL = "exponential"
+    BOUNCE = "bounce"
+
+class OrientationModulation(MotionComponent):
+    """
+    Nivel 1: Modulación de orientación básica (yaw, pitch, roll)
+    La fuente gira sobre sí misma sin mover su centro
+    """
+    
+    def __init__(self):
+        super().__init__("orientation_modulation")
+        self.yaw_func: Optional[Callable[[float], float]] = None
+        self.pitch_func: Optional[Callable[[float], float]] = None
+        self.roll_func: Optional[Callable[[float], float]] = None
+        self._orientation_update_threshold = 0.01  # Umbral para actualizar orientación
+        self._aperture_update_threshold = 0.01  # Umbral para actualizar apertura
+        self.smoothing = 0.1  # Suavizado de cambios
+    def set_modulation(self, 
+                      yaw: Optional[Callable] = None,
+                      pitch: Optional[Callable] = None, 
+                      roll: Optional[Callable] = None):
+        """Configurar funciones de modulación"""
+        if yaw:
+            self.yaw_func = yaw
+        if pitch:
+            self.pitch_func = pitch
+        if roll:
+            self.roll_func = roll
+            
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        if not self.enabled:
+            return state
+        
+        # Código de modulación de orientación aquí
+        return state
+    def _smooth_angle(self, current: float, target: float, dt: float) -> float:
+        """Suavizar transición entre ángulos"""
+        # Manejar el wrap-around de ángulos
+        diff = target - current
+        if diff > np.pi:
+            diff -= 2 * np.pi
+        elif diff < -np.pi:
+            diff += 2 * np.pi
+            
+        return current + diff * self.smoothing
+
+class AdvancedOrientationModulation(OrientationModulation):
+    """
+    Modulación avanzada con soporte para P1, P2, P3
+    P1: Forma de modulación (combinación de m1, m2, m3)
+    P2: Velocidad de modulación (LFO)
+    P3: Directividad (Aperture)
+    """
+    
+    def __init__(self, source_id: Optional[int] = None):
+        super().__init__()
+        self.name = "advanced_orientation_modulation"
+        self.source_id = source_id  # ID de la fuente asociada
+        self.source_id = source_id  # ID de la fuente asociada
+        
+        # Parámetros P1 (Forma)
+        self.modulation_shape = "circular"  # linear, arc, circular, spiral, lissajous
+        self.shape_scale = np.array([1.0, 1.0, 1.0])  # m2(a,b,c) - escala en cada eje
+        self.shape_translation = np.array([0.0, 0.0, 0.0])  # m2(d,e) - offset
+        self.rotation_mode = "none"  # none, circular, so3
+        
+        # Parámetros P2 (Velocidad)
+        self.lfo_frequency = 0.5  # Hz
+        self.lfo_phase = 0.0
+        
+        # Parámetros P3 (Directividad)
+        self.aperture_base = 0.5
+        self.aperture_modulation = 0.0
+        
+        # Control de intensidad global (C2)
+        self.intensity = 1.0  # 0.0 a 1.0
+        
+        # Parámetros internos
+        self.time_offset = 0.0
+        self.noise_seed = np.random.random()
+        
+        # Presets predefinidos (alineados con el simulador)
+        self.presets = {
+            "circle": {
+                "shape": "circle",
+                "scale": [0.5, 0.5, 0.2],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 1.0,
+                "aperture": 0.5,
+                "aperture_mod": 0.1,
+                "description": "Movimiento circular simple"
+            },
+            "ellipse": {
+                "shape": "ellipse",
+                "scale": [0.7, 0.4, 0.1],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 0.8,
+                "aperture": 0.6,
+                "aperture_mod": 0.1,
+                "description": "Movimiento elíptico"
+            },
+            "lissajous": {
+                "shape": "lissajous",
+                "scale": [1.0, 0.7, 0.5],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 0.3,
+                "aperture": 0.5,
+                "aperture_mod": 0.15,
+                "description": "Figura de Lissajous 3D"
+            },
+            "spiral": {
+                "shape": "spiral",
+                "scale": [1.0, 1.0, 0.5],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 0.1,
+                "aperture": 0.9,
+                "aperture_mod": 0.05,
+                "description": "Espiral expansiva"
+            },
+            "respiración_suave": {
+                "shape": "circle",
+                "scale": [0.3, 0.3, 0.1],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 0.2,
+                "aperture": 0.7,
+                "aperture_mod": 0.1,
+                "description": "Movimiento circular suave como respiración"
+            },
+            "nervioso_aleatorio": {
+                "shape": "random",
+                "scale": [0.1, 0.1, 0.1],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 5.0,
+                "aperture": 0.3,
+                "aperture_mod": 0.2,
+                "description": "Vibraciones nerviosas aleatorias"
+            },
+            "espiral_cósmica": {
+                "shape": "spiral",
+                "scale": [1.0, 1.0, 0.5],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 0.1,
+                "aperture": 0.9,
+                "aperture_mod": 0.05,
+                "description": "Espiral expansiva lenta"
+            },
+            "lissajous_complejo": {
+                "shape": "lissajous",
+                "scale": [1.0, 0.7, 0.5],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 0.3,
+                "aperture": 0.5,
+                "aperture_mod": 0.15,
+                "description": "Figura de Lissajous 3D compleja"
+            },
+            "péndulo_hipnótico": {
+                "shape": "pendulum",
+                "scale": [0.8, 0.0, 0.6],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 0.4,
+                "aperture": 0.6,
+                "aperture_mod": 0.1,
+                "description": "Movimiento pendular hipnótico"
+            },
+            "vibración_sísmica": {
+                "shape": "seismic",
+                "scale": [0.2, 0.2, 0.1],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 8.0,
+                "aperture": 0.4,
+                "aperture_mod": 0.3,
+                "description": "Vibraciones sísmicas rápidas"
+            },
+            "flotación_oceánica": {
+                "shape": "ocean",
+                "scale": [0.4, 0.3, 0.5],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 0.15,
+                "aperture": 0.8,
+                "aperture_mod": 0.1,
+                "description": "Movimiento ondulante como en el océano"
+            },
+            "rotación_mecánica": {
+                "shape": "mechanical",
+                "scale": [1.0, 0.0, 0.0],
+                "translation": [0.0, 0.0, 0.0],
+                "lfo": 1.0,
+                "aperture": 0.2,
+                "aperture_mod": 0.0,
+                "description": "Rotación mecánica constante"
+            }
+        }
+        
+    def apply_preset(self, preset_name: str):
+        """Aplicar un preset predefinido"""
+        if preset_name in self.presets:
+            preset = self.presets[preset_name]
+            self.modulation_shape = preset["shape"]
+            self.shape_scale = np.array(preset["scale"])
+            self.shape_translation = np.array(preset["translation"])
+            self.lfo_frequency = preset["lfo"]
+            self.aperture_base = preset["aperture"]
+            self.aperture_modulation = preset.get("aperture_mod", 0.0)
+            logger.info(f"Preset '{preset_name}' aplicado: {preset['description']}")            
+    def interpolate_presets(self, preset1: str, preset2: str, factor: float):
+        """Interpolar entre dos presets (0.0 = preset1, 1.0 = preset2)"""
+        if preset1 in self.presets and preset2 in self.presets:
+            p1 = self.presets[preset1]
+            p2 = self.presets[preset2]
+            
+            # Interpolar parámetros numéricos
+            self.shape_scale = np.array(p1["scale"]) * (1-factor) + np.array(p2["scale"]) * factor
+            self.shape_translation = np.array(p1["translation"]) * (1-factor) + np.array(p2["translation"]) * factor
+            self.lfo_frequency = p1["lfo"] * (1-factor) + p2["lfo"] * factor
+            self.aperture_base = p1["aperture"] * (1-factor) + p2["aperture"] * factor
+            self.aperture_modulation = p1.get("aperture_mod", 0) * (1-factor) + p2.get("aperture_mod", 0) * factor
+            
+            # Para la forma, usar el más dominante
+            if factor < 0.5:
+                self.modulation_shape = p1["shape"]
+            else:
+                self.modulation_shape = p2["shape"]
+                
+    def set_intensity(self, intensity: float):
+        """Establecer intensidad global de la modulación (0.0 a 1.0)"""
+        self.intensity = np.clip(intensity, 0.0, 1.0)
+        
+    def _perlin_noise(self, x: float, y: float = 0, z: float = 0) -> float:
+        """Ruido Perlin simplificado para movimiento orgánico"""
+        # Implementación básica de ruido
+        def fade(t):
+            return t * t * t * (t * (t * 6 - 15) + 10)
+        
+        def lerp(t, a, b):
+            return a + t * (b - a)
+        
+        # Usar sin() como aproximación para demo
+        return np.sin(x * 2.1 + self.noise_seed) * np.cos(y * 1.7) * np.sin(z * 2.3)
+        
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        if not self.enabled or self.intensity == 0.0:
+            return state
+            
+        # Calcular fase actual
+        phase = (current_time + self.time_offset) * self.lfo_frequency * 2 * np.pi + self.lfo_phase
+        
+        # Generar modulación según la forma seleccionada
+        if self.modulation_shape == "circular" or self.modulation_shape == "circle":
+            yaw = np.sin(phase) * self.shape_scale[0]
+            pitch = np.cos(phase) * self.shape_scale[1]
+            roll = np.sin(phase * 2) * self.shape_scale[2]
+            
+        elif self.modulation_shape == "ellipse":
+            # Elipse: similar al círculo pero con diferentes escalas
+            yaw = np.sin(phase) * self.shape_scale[0]
+            pitch = np.cos(phase) * self.shape_scale[1] * 0.5  # Elipse más achatada
+            roll = np.sin(phase * 2) * self.shape_scale[2]
+            
+        elif self.modulation_shape == "lissajous":
+            yaw = np.sin(phase * 3) * self.shape_scale[0]
+            pitch = np.sin(phase * 2) * self.shape_scale[1]
+            roll = np.sin(phase * 5) * self.shape_scale[2]
+            
+        elif self.modulation_shape == "spiral":
+            radius = 0.1 + (phase % (2*np.pi)) / (2*np.pi)
+            yaw = np.sin(phase) * radius * self.shape_scale[0]
+            pitch = np.cos(phase) * radius * self.shape_scale[1]
+            roll = phase * 0.1 * self.shape_scale[2]
+            
+        elif self.modulation_shape == "random":
+            # Usar ruido Perlin para movimiento más orgánico
+            t = current_time * self.lfo_frequency
+            yaw = self._perlin_noise(t, 0, 0) * self.shape_scale[0]
+            pitch = self._perlin_noise(0, t, 0) * self.shape_scale[1]
+            roll = self._perlin_noise(0, 0, t) * self.shape_scale[2]
+            
+        elif self.modulation_shape == "pendulum":
+            yaw = np.sin(phase) * self.shape_scale[0]
+            pitch = 0.0  # Sin movimiento en pitch
+            roll = np.sin(phase) * self.shape_scale[2]
+            
+        elif self.modulation_shape == "seismic":
+            # Vibraciones rápidas con envolvente
+            envelope = 1.0 - ((phase % (2*np.pi)) / (2*np.pi))
+            yaw = np.sin(phase * 20) * envelope * self.shape_scale[0]
+            pitch = np.cos(phase * 23) * envelope * self.shape_scale[1]
+            roll = np.sin(phase * 17) * envelope * self.shape_scale[2]
+            
+        elif self.modulation_shape == "ocean":
+            # Múltiples ondas superpuestas
+            wave1 = np.sin(phase * 0.7) * 0.6
+            wave2 = np.sin(phase * 1.3) * 0.3
+            wave3 = np.sin(phase * 2.1) * 0.1
+            combined = wave1 + wave2 + wave3
+            
+            yaw = combined * self.shape_scale[0]
+            pitch = np.sin(phase * 0.9) * self.shape_scale[1]
+            roll = combined * 0.7 * self.shape_scale[2]
+            
+        elif self.modulation_shape == "mechanical":
+            # Rotación constante en yaw
+            yaw = (phase % (2*np.pi)) - np.pi  # -π a π
+            pitch = 0.0
+            roll = 0.0
+            
+        else:  # linear o default
+            yaw = np.sin(phase) * self.shape_scale[0]
+            pitch = 0.0
+            roll = 0.0
+            
+        # Aplicar traslación
+        yaw += self.shape_translation[0]
+        pitch += self.shape_translation[1]
+        roll += self.shape_translation[2]
+        
+        # Aplicar intensidad
+        yaw *= self.intensity
+        pitch *= self.intensity
+        roll *= self.intensity
+        
+        # Actualizar estado con suavizado
+        state.orientation[0] = self._smooth_angle(state.orientation[0], yaw, dt)
+        state.orientation[1] = self._smooth_angle(state.orientation[1], pitch, dt)
+        state.orientation[2] = self._smooth_angle(state.orientation[2], roll, dt)
+        
+        # Modular aperture
+        aperture_mod = np.sin(phase * 0.5) * self.aperture_modulation * self.intensity
+        state.aperture = np.clip(self.aperture_base + aperture_mod, 0.0, 1.0)
+        
+        return state
+        
+    def get_state_dict(self) -> Dict:
+        """Obtener estado actual para serialización"""
+        return {
+            "enabled": self.enabled,
+            "modulation_shape": self.modulation_shape,
+            "shape_scale": self.shape_scale.tolist(),
+            "shape_translation": self.shape_translation.tolist(),
+            "rotation_mode": self.rotation_mode,
+            "lfo_frequency": self.lfo_frequency,
+            "lfo_phase": self.lfo_phase,
+            "aperture_base": self.aperture_base,
+            "aperture_modulation": self.aperture_modulation,
+            "intensity": self.intensity,
+            "time_offset": self.time_offset
+        }
+        
+    def load_state_dict(self, state: Dict):
+        """Cargar estado desde diccionario"""
+        self.enabled = state.get("enabled", True)
+        self.modulation_shape = state.get("modulation_shape", "circular")
+        self.shape_scale = np.array(state.get("shape_scale", [1.0, 1.0, 1.0]))
+        self.shape_translation = np.array(state.get("shape_translation", [0.0, 0.0, 0.0]))
+        self.rotation_mode = state.get("rotation_mode", "none")
+        self.lfo_frequency = state.get("lfo_frequency", 0.5)
+        self.lfo_phase = state.get("lfo_phase", 0.0)
+        self.aperture_base = state.get("aperture_base", 0.5)
+        self.aperture_modulation = state.get("aperture_modulation", 0.0)
+        self.intensity = state.get("intensity", 1.0)
+        self.time_offset = state.get("time_offset", 0.0)
+
+class IndividualTrajectory(MotionComponent, MovementModeMixin):
+    """
+    Nivel 2: Trayectoria individual de cada fuente
+    Define la forma (círculo, espiral, etc.)
+    """
+    
+    def update_movement(self, dt: float) -> float:
+        """Actualizar posición según el modo de movimiento"""
+        if self.movement_mode == TrajectoryMovementMode.STOP:
+            return self.position_on_trajectory
+            
+        elif self.movement_mode == TrajectoryMovementMode.FIX:
+            # Movimiento normal
+            self.position_on_trajectory += self.movement_speed * self.speed_factor * dt
+            return self.position_on_trajectory
+            
+        elif self.movement_mode == TrajectoryMovementMode.RANDOM:
+            # Actualizar timer
+            self.random_timer += dt
+            if self.random_timer >= self.random_interval:
+                self.random_timer = 0.0
+                self.random_target = np.random.uniform(0, 2 * np.pi)
+            
+            # Interpolar suavemente hacia el objetivo
+            diff = self.random_target - self.position_on_trajectory
+            self.position_on_trajectory += diff * (1.0 - self.random_smoothing) * dt
+            return self.position_on_trajectory
+            
+        elif self.movement_mode == TrajectoryMovementMode.VIBRATION:
+            # Movimiento base + vibración
+            self.position_on_trajectory += self.movement_speed * self.speed_factor * dt
+            self.vibration_phase += self.vibration_frequency * dt
+            vibration = self.vibration_amplitude * np.sin(self.vibration_phase * 2 * np.pi)
+            return self.position_on_trajectory + vibration
+            
+        elif self.movement_mode == TrajectoryMovementMode.SPIN:
+            # Rotación rápida
+            self.position_on_trajectory += self.spin_speed * dt
+            return self.position_on_trajectory
+            
+        elif self.movement_mode == TrajectoryMovementMode.FREEZE:
+            # Mantener posición congelada
+            if self.freeze_position is None:
+                self.freeze_position = self.position_on_trajectory
+            return self.freeze_position
+            
+        return self.position_on_trajectory
+
+    def __init__(self, source_id: Optional[int] = None):
+        super().__init__("individual_trajectory")
+        MovementModeMixin.__init__(self)
+        self.trajectory_type = "static"
+        self.radius = 1.0
+        self.height = 0.0
+        self.phase = 0.0
+        self.speed = 1.0
+        self.center = np.zeros(3)
+        self.shape_type = "circle"
+        self.movement_mode = TrajectoryMovementMode.FIX
+        self.position_on_trajectory = 0.0
+        self.movement_speed = 1.0
+        self.speed_factor = 1.0  # Factor individual de velocidad (fase)
+        self.initial_offset = 0.0  # Offset inicial en la trayectoria
+        self.speed_factor = 1.0  # Factor individual de velocidad (fase)
+        self.initial_offset = 0.0  # Offset inicial en la trayectoria
+        self.vibration_frequency = 2.0
+        self.vibration_amplitude = 0.1
+        self.vibration_phase = 0.0
+        self.random_timer = 0.0
+        self.random_target = 0.0
+        self.random_interval = 1.0
+        self.random_smoothing = 0.8
+        self.spin_speed = 10.0
+        self.freeze_position = None
+        
+    def set_trajectory(self, traj_type: str, **params):
+        """Configurar tipo y parámetros de trayectoria"""
+        self.trajectory_type = traj_type
+        self.radius = params.get('radius', 1.0)
+        self.height = params.get('height', 0.0)
+        self.speed = params.get('speed', 1.0)
+        self.center = params.get('center', np.zeros(3))
+        
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        """Update trajectory position with rotation support"""
+        if not self.enabled:
+            return state
+        
+        # Actualizar posición usando el mixin
+        self.position_on_trajectory = self.update_movement(dt)
+        
+        # Calcular posición basada en la trayectoria
+        if hasattr(self, 'trajectory_func') and self.trajectory_func:
+            new_position = self.trajectory_func(self.position_on_trajectory)
+        else:
+            # Trayectoria circular por defecto
+            radius = 2.0
+            new_position = self.center + np.array([
+                radius * np.cos(self.position_on_trajectory),
+                radius * np.sin(self.position_on_trajectory),
+                0.0
+            ])
+        
+        # APLICAR ROTACIÓN SI EXISTE
+        if hasattr(self, 'rotation_matrix') and self.rotation_matrix is not None:
+            # Rotar alrededor del centro
+            rel_pos = new_position - self.center
+            rotated_pos = self.rotation_matrix @ rel_pos
+            new_position = self.center + rotated_pos
+        
+        state.position = new_position
+        return state
+
+    def set_rotation(self, pitch: float = 0.0, yaw: float = 0.0, roll: float = 0.0, enabled: bool = True):
+        """
+        Configurar la rotación de la trayectoria individual
+        
+        Parameters
+        ----------
+        pitch : float
+            Rotación alrededor del eje X (radianes)
+        yaw : float
+            Rotación alrededor del eje Y (radianes)
+        roll : float
+            Rotación alrededor del eje Z (radianes)
+        enabled : bool
+            Activar/desactivar la rotación
+        """
+        self.rotation_enabled = enabled
+        self.rotation_euler = np.array([pitch, yaw, roll])
+        
+        # Calcular matriz de rotación
+        if enabled:
+            # Rotación X (pitch)
+            cx, sx = np.cos(pitch), np.sin(pitch)
+            rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+            
+            # Rotación Y (yaw)
+            cy, sy = np.cos(yaw), np.sin(yaw)
+            ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+            
+            # Rotación Z (roll)
+            cz, sz = np.cos(roll), np.sin(roll)
+            rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+            
+            # Matriz de rotación combinada: R = Rz * Ry * Rx
+            self.rotation_matrix = rz @ ry @ rx
+        else:
+            self.rotation_matrix = np.eye(3)
+    def update_position(self, dt: float) -> None:
+        """Actualiza la posición en la trayectoria según el modo de movimiento."""
+        if not self.enabled or self.movement_mode == TrajectoryMovementMode.STOP:
+            return
+            
+        if self.movement_mode == TrajectoryMovementMode.FIX:
+            self.position_on_trajectory += self.movement_speed * dt
+        elif self.movement_mode == TrajectoryMovementMode.RANDOM:
+            import random
+            if not hasattr(self, '_last_random_change'):
+                self._last_random_change = 0
+                self._random_speed = self.movement_speed
+            
+            self._last_random_change += dt
+            if self._last_random_change > 2.0:
+                self._random_speed = random.uniform(-2.0, 2.0)
+                self._last_random_change = 0
+                
+            self.position_on_trajectory += self._random_speed * dt
+        elif self.movement_mode == TrajectoryMovementMode.VIBRATION:
+            vibration = np.sin(self.position_on_trajectory * 20) * 0.5
+            self.position_on_trajectory += (self.movement_speed + vibration) * dt
+        elif self.movement_mode == TrajectoryMovementMode.SPIN:
+            self.position_on_trajectory += self.movement_speed * 5.0 * dt
+            
+        self.position_on_trajectory = self.position_on_trajectory % 1.0
+    
+    def _calculate_position_on_trajectory(self, phase: float) -> np.ndarray:
+        """Calcula la posición 3D en la trayectoria basada en la fase [0, 1]."""
+        t = phase * 2 * np.pi
+        
+        if self.shape_type == "circle":
+            radius = self.shape_params.get('radius', 1.0)
+            x = radius * np.cos(t)
+            y = radius * np.sin(t)
+            z = 0.0
+        elif self.shape_type == "spiral":
+            radius = self.shape_params.get('radius', 1.0)
+            height = self.shape_params.get('height', 2.0)
+            turns = self.shape_params.get('turns', 3)
+            x = radius * np.cos(t * turns)
+            y = radius * np.sin(t * turns)
+            z = height * phase
+        else:
+            x = y = z = 0.0
+            
+        position = np.array([x, y, z])
+        if hasattr(self, 'center'):
+            position += self.center
+        return position
+    
+    def calculate_delta(self, state: MotionState, dt: float) -> MotionDelta:
+        """Calcula el delta de movimiento para trayectoria individual."""
+        delta = MotionDelta()
+        
+        if not self.enabled or self.movement_mode == TrajectoryMovementMode.STOP:
+            return delta
+        
+        self.update_position(dt)
+        new_position = self._calculate_position_on_trajectory(self.position_on_trajectory)
+        
+        if hasattr(state, 'individual_trajectory_position'):
+            delta.position = new_position - state.individual_trajectory_position
+        else:
+            delta.position = new_position
+        
+        state.individual_trajectory_position = new_position.copy()
+        return delta
+
+    def calculate_delta(self, state, current_time, dt):
+        """Calcula el delta de movimiento para esta trayectoria individual"""
+        if not self.enabled:
+            return None
+        
+        # Actualizar posición en la trayectoria
+        if hasattr(self, 'update_position'):
+            self.update_position(dt)
+        else:
+            # Fallback: actualizar manualmente
+            self.position_on_trajectory += self.movement_speed * dt
+            if self.position_on_trajectory > 1.0:
+                self.position_on_trajectory -= 1.0
+        
+        # Calcular nueva posición 3D
+        if hasattr(self, '_calculate_position_on_trajectory'):
+            new_position = self._calculate_position_on_trajectory(self.position_on_trajectory)
+        else:
+            # Fallback: calcular posición circular
+            import numpy as np
+            t = self.position_on_trajectory * 2 * np.pi
+            radius = getattr(self, 'radius', 2.0)
+            new_position = np.array([
+                radius * np.cos(t),
+                radius * np.sin(t),
+                0.0
+            ])
+        
+        # Crear delta
+        from .motion_components import MotionDelta
+        delta = MotionDelta()
+        delta.position = new_position - state.position
+        
+        return delta
+
+
+
+class MacroMovement(MotionComponent):
+    """
+    Nivel 3: Movimiento del macro completo
+    Afecta al centro de masa del grupo
+    """
+    
+    def __init__(self):
+        super().__init__("macro_movement")
+        self.trajectory_func: Optional[Callable[[float], np.ndarray]] = None
+        self.speed = 1.0
+        self.phase = 0.0
+        
+    def set_trajectory(self, func: Callable[[float], np.ndarray], speed: float = 1.0):
+        """Establecer función de trayectoria del macro"""
+        self.trajectory_func = func
+        self.speed = speed
+        
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        if not self.enabled or not self.trajectory_func:
+            return state
+            
+        self.phase += self.speed * dt
+        offset = self.trajectory_func(self.phase)
+        state.position += offset * self.weight
+        
+        return state
+
+class MacroTrajectory(MotionComponent, MovementModeMixin):
+    """
+    Componente para manejar la trayectoria de un macro completo
+    Similar a MacroMovement pero con funcionalidad extendida
+    """
+    
+    def __init__(self):
+        super().__init__("macro_trajectory")
+        MovementModeMixin.__init__(self)
+        self.trajectory_func: Optional[Callable[[float], np.ndarray]] = None
+        self.orientation_func: Optional[Callable[[float], np.ndarray]] = None
+        self.speed = 1.0
+        self.phase = 0.0
+        self.last_position = np.zeros(3)
+        self.last_orientation = np.zeros(3)
+        
+    def set_trajectory(self, 
+                      position_func: Optional[Callable[[float], np.ndarray]] = None,
+                      orientation_func: Optional[Callable[[float], np.ndarray]] = None,
+                      speed: float = 1.0):
+        """Establecer funciones de trayectoria"""
+        if position_func is not None:
+            self.trajectory_func = position_func
+        if orientation_func is not None:
+            self.orientation_func = orientation_func
+        self.speed = speed
+        
+    def get_offset(self) -> np.ndarray:
+        """Obtener el offset actual del macro"""
+        return self.last_position
+        
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        if not self.enabled:
+            return state
+            
+        self.phase += self.speed * dt
+        
+        # Actualizar posición si hay función de trayectoria
+        if self.trajectory_func:
+            new_position = self.trajectory_func(self.phase)
+            if isinstance(new_position, np.ndarray) and new_position.shape == (3,):
+                self.last_position = new_position
+                state.position = new_position
+                
+        # Actualizar orientación si hay función
+        if self.orientation_func:
+            new_orientation = self.orientation_func(self.phase)
+            if isinstance(new_orientation, np.ndarray) and new_orientation.shape == (3,):
+                self.last_orientation = new_orientation
+                state.orientation = new_orientation
+                
+        return state
+        
+    
+    def calculate_delta(self, state: 'MotionState', current_time: float, dt: float) -> Optional['MotionDelta']:
+        """Calcular delta de movimiento para trayectoria macro"""
+        if not self.enabled or not self.trajectory_func:
+            return None
+        
+        # Calcular nueva fase
+        new_phase = self.phase + self.speed * dt
+        
+        # Obtener posición objetivo de la trayectoria
+        target_position = self.trajectory_func(new_phase)
+        
+        # Calcular delta desde la posición actual
+        delta_position = target_position - self.last_position
+        
+        # Actualizar fase y última posición para próximo cálculo
+        self.phase = new_phase
+        self.last_position = target_position.copy()
+        
+        # Manejar orientación si existe
+        delta_orientation = np.zeros(3)
+        if self.orientation_func:
+            target_orientation = self.orientation_func(new_phase)
+            delta_orientation = target_orientation - self.last_orientation
+            self.last_orientation = target_orientation.copy()
+        
+        # Crear y retornar MotionDelta
+        return MotionDelta(
+            position=delta_position,
+            orientation=delta_orientation,
+            aperture=0.0
+        )
+
+    def reset(self):
+        """Resetear el componente"""
+        super().reset()
+        self.phase = 0.0
+        self.last_position = np.zeros(3)
+        self.last_orientation = np.zeros(3)
+
+
+class MacroRotation(MotionComponent):
+    """Rotación algorítmica para grupos de fuentes - Sistema de deltas"""
+    
+    def __init__(self):
+        super().__init__()
+        self.component_type = 'macro_rotation'
+        self.enabled = False
+        
+        # Centro de rotación - siempre numpy array
+        self.center = np.zeros(3, dtype=np.float32)
+        
+        # Velocidades de rotación (rad/s) - siempre escalares
+        self._speed_x = 0.0
+        self._speed_y = 0.0  
+        self._speed_z = 0.0
+        
+        # Ángulos actuales - siempre escalares
+        self.angle_x = 0.0
+        self.angle_y = 0.0
+        self.angle_z = 0.0
+        
+    @property
+    def speed_x(self):
+        return float(self._speed_x)
+        
+    @speed_x.setter
+    def speed_x(self, value):
+        self._speed_x = float(value) if not isinstance(value, (list, np.ndarray)) else float(value[0] if len(value) > 0 else 0)
+        
+    @property
+    def speed_y(self):
+        return float(self._speed_y)
+        
+    @speed_y.setter
+    def speed_y(self, value):
+        self._speed_y = float(value) if not isinstance(value, (list, np.ndarray)) else float(value[0] if len(value) > 0 else 0)
+        
+    @property
+    def speed_z(self):
+        return float(self._speed_z)
+        
+    @speed_z.setter
+    def speed_z(self, value):
+        self._speed_z = float(value) if not isinstance(value, (list, np.ndarray)) else float(value[0] if len(value) > 0 else 0)
+        
+    def set_rotation(self, speed_x=0.0, speed_y=0.0, speed_z=0.0, center=None):
+        """Configura velocidades de rotación de forma segura"""
+        # Usar setters que garantizan float
+        self.speed_x = speed_x
+        self.speed_y = speed_y
+        self.speed_z = speed_z
+        
+        if center is not None:
+            # Garantizar que center es numpy array de 3 elementos
+            if isinstance(center, (list, tuple)):
+                self.center = np.array(center[:3], dtype=np.float32)
+            elif isinstance(center, np.ndarray):
+                self.center = center.flatten()[:3].astype(np.float32)
+            else:
+                self.center = np.zeros(3, dtype=np.float32)
+        
+        # Habilitar si alguna velocidad es significativa
+        # Usar abs() con floats garantizados
+        threshold = 0.001
+        self.enabled = (
+            abs(self.speed_x) > threshold or
+            abs(self.speed_y) > threshold or
+            abs(self.speed_z) > threshold
+        )
+        
+    def calculate_delta(self, state, current_time, dt):
+        """Calcula delta de rotación para sistema de deltas"""
+        if not self.enabled:
+            return MotionDelta()
+            
+        # Garantizar dt es float
+        dt_float = float(dt) if not isinstance(dt, float) else dt
+        
+        # Actualizar ángulos (todos son floats)
+        self.angle_x += self.speed_x * dt_float
+        self.angle_y += self.speed_y * dt_float
+        self.angle_z += self.speed_z * dt_float
+        
+        # Posición actual - garantizar numpy array
+        current_pos = np.array(state.position, dtype=np.float32)
+        
+        # Posición relativa al centro
+        rel_pos = current_pos - self.center
+        
+        # Precalcular senos y cosenos
+        cx, sx = np.cos(self.angle_x), np.sin(self.angle_x)
+        cy, sy = np.cos(self.angle_y), np.sin(self.angle_y)
+        cz, sz = np.cos(self.angle_z), np.sin(self.angle_z)
+        
+        # Aplicar rotaciones (Z -> Y -> X)
+        # Rotación Z
+        x1 = rel_pos[0] * cz - rel_pos[1] * sz
+        y1 = rel_pos[0] * sz + rel_pos[1] * cz
+        z1 = rel_pos[2]
+        
+        # Rotación Y
+        x2 = x1 * cy + z1 * sy
+        y2 = y1
+        z2 = -x1 * sy + z1 * cy
+        
+        # Rotación X
+        x3 = x2
+        y3 = y2 * cx - z2 * sx
+        z3 = y2 * sx + z2 * cx
+        
+        # Nueva posición absoluta
+        new_pos = np.array([x3, y3, z3], dtype=np.float32) + self.center
+        
+        # Crear delta
+        delta = MotionDelta()
+        delta.position = new_pos - current_pos
+        
+        return delta
+        
+    def update(self, current_time, dt, state):
+        """Actualiza el estado con el delta calculado"""
+        if not self.enabled:
+            return state
+            
+        delta = self.calculate_delta(state, current_time, dt)
+        state.position += delta.position
+        
+        return state
+        
+    def get_state(self):
+        """Obtiene el estado actual del componente"""
+        return {
+            'type': self.component_type,
+            'enabled': bool(self.enabled),
+            'center': self.center.tolist(),
+            'speed_x': float(self.speed_x),
+            'speed_y': float(self.speed_y),
+            'speed_z': float(self.speed_z),
+            'angle_x': float(self.angle_x),
+            'angle_y': float(self.angle_y),
+            'angle_z': float(self.angle_z)
+        }
+
+
+
+
+class ManualMacroRotation(MotionComponent):
+    """Rotación manual de macro con control directo de ángulos"""
+    
+    def __init__(self):
+        super().__init__("manual_macro_rotation")
+        
+        # Ángulos objetivo en radianes
+        self.target_pitch = 0.0
+        self.target_yaw = 0.0
+        self.target_roll = 0.0
+        
+        # Ángulos actuales
+        self.current_pitch = 0.0
+        self.current_yaw = 0.0
+        self.current_roll = 0.0
+        
+        # Velocidad de interpolación (0-1, donde 1 es instantáneo)
+        self.interpolation_speed = 0.1
+        
+        # Centro de rotación
+        self.center = np.array([0.0, 0.0, 0.0])
+        
+        self.enabled = True
+    
+    def set_target_rotation(self, pitch: float = None, yaw: float = None, roll: float = None):
+        """Establece los ángulos objetivo"""
+        if pitch is not None:
+            self.target_pitch = pitch
+        if yaw is not None:
+            self.target_yaw = yaw
+        if roll is not None:
+            self.target_roll = roll
+    
+    def set_interpolation_speed(self, speed: float):
+        """Establece la velocidad de interpolación (0-1)"""
+        self.interpolation_speed = max(0.0, min(1.0, speed))
+    
+    
+    def calculate_delta(self, state: 'MotionState', current_time: float, dt: float) -> Optional['MotionDelta']:
+        """Calcula el cambio necesario para la rotación manual usando ángulos polares"""
+        if not self.enabled:
+            return None
+            
+        from trajectory_hub.core import MotionDelta
+        delta = MotionDelta()
+        
+        current_position = np.array(state.position)
+        relative_pos = current_position - self.center
+        
+        # Solo procesar si no está en el centro
+        distance_xy = np.sqrt(relative_pos[0]**2 + relative_pos[1]**2)
+        if distance_xy < 0.001:
+            # Si está muy cerca del centro, mover ligeramente
+            # delta.position = np.array([0.1, 0.0, 0.0]) # PROBLEMA: Esto no es rotación
+            # Si está en el centro, no hacer nada por ahora
+            delta.position = np.array([0.0, 0.0, 0.0])
+            return delta
+        
+        # Calcular ángulo actual usando atan2
+        current_angle = np.arctan2(relative_pos[1], relative_pos[0])
+        
+        # Para debug
+        # print(f"Pos: {current_position}, Angle: {np.degrees(current_angle):.1f}°")
+        
+        # Calcular diferencia angular con el objetivo
+        angle_diff = self.target_yaw - current_angle
+        
+        # Normalizar a [-pi, pi] para tomar la ruta más corta
+        while angle_diff > np.pi:
+            angle_diff -= 2 * np.pi
+        while angle_diff < -np.pi:
+            angle_diff += 2 * np.pi
+        
+        # Aplicar interpolación
+        angle_step = angle_diff * self.interpolation_speed * dt
+        new_angle = current_angle + angle_step
+        
+        # Calcular nueva posición manteniendo la distancia
+        new_x = distance_xy * np.cos(new_angle) + self.center[0]
+        new_y = distance_xy * np.sin(new_angle) + self.center[1]
+        new_z = current_position[2]  # Z sin cambios para YAW
+        
+        new_position = np.array([new_x, new_y, new_z])
+        delta.position = new_position - current_position
+        
+        return delta
+
+    
+    def _sync_with_state(self, state: 'MotionState'):
+        """Sincroniza el componente con el estado actual"""
+        # No hacer nada - la posición se lee directamente del state en calculate_delta
+        pass
+
+    def update(self, current_time: float, dt: float, state: 'MotionState') -> 'MotionState':
+        """Actualiza el estado aplicando la rotación manual"""
+        if not self.enabled:
+            return state
+            
+        # Sincronizar estado actual
+        self._sync_with_state(state)
+        
+        # Calcular delta
+        delta = self.calculate_delta(state, current_time, dt)
+        
+        if delta and delta.position is not None:
+            # Aplicar el delta al estado
+            state.position = [
+                state.position[0] + delta.position[0],
+                state.position[1] + delta.position[1],
+                state.position[2] + delta.position[2]
+            ]
+            
+        return state
+
+class IndividualRotation(MotionComponent):
+    """Rotación algorítmica continua para fuentes individuales"""
+    
+    def __init__(self, center: Optional[np.ndarray] = None,
+                 speed_x: float = 0.0, speed_y: float = 0.0, speed_z: float = 0.0):
+        """
+        Args:
+            center: Centro de rotación (default: origen de la fuente)
+            speed_x: Velocidad de rotación en X (rad/s)
+            speed_y: Velocidad de rotación en Y (rad/s)
+            speed_z: Velocidad de rotación en Z (rad/s)
+        """
+        super().__init__()
+        self.center = np.array(center if center is not None else [0.0, 0.0, 0.0])
+        self.speed_x = float(speed_x)
+        self.speed_y = float(speed_y)
+        self.speed_z = float(speed_z)
+        self.enabled = any(abs(s) > 0.001 for s in [speed_x, speed_y, speed_z])
+        
+        # Tiempo acumulado para la rotación
+        self.accumulated_time = 0.0
+        
+    def update(self, current_time: float, dt: float):
+        """Actualiza el tiempo acumulado"""
+        if self.enabled:
+            self.accumulated_time += dt
+    
+    def calculate_delta(self, state: 'MotionState', current_time: float, dt: float) -> Optional['MotionDelta']:
+        """Calcula el cambio para rotación continua individual"""
+        if not self.enabled:
+            return None
+            
+        from trajectory_hub.core import MotionDelta
+        delta = MotionDelta()
+        
+        # Posición relativa al centro
+        current_position = np.array(state.position)
+        relative_pos = current_position - self.center
+        
+        # Si está muy cerca del centro, mover ligeramente
+        if np.linalg.norm(relative_pos) < 0.001:
+            delta.position = np.array([0.1, 0.0, 0.0])
+            return delta
+        
+        # Calcular rotaciones incrementales
+        angle_x = self.speed_x * dt
+        angle_y = self.speed_y * dt
+        angle_z = self.speed_z * dt
+        
+        # Aplicar rotaciones en orden Y, X, Z (evita gimbal lock)
+        new_pos = relative_pos.copy()
+        
+        # Rotación alrededor de Y (yaw)
+        if abs(angle_y) > 0.00001:
+            cos_y = np.cos(angle_y)
+            sin_y = np.sin(angle_y)
+            x = new_pos[0]
+            z = new_pos[2]
+            new_pos[0] = x * cos_y - z * sin_y
+            new_pos[2] = x * sin_y + z * cos_y
+        
+        # Rotación alrededor de X (pitch)
+        if abs(angle_x) > 0.00001:
+            cos_x = np.cos(angle_x)
+            sin_x = np.sin(angle_x)
+            y = new_pos[1]
+            z = new_pos[2]
+            new_pos[1] = y * cos_x - z * sin_x
+            new_pos[2] = y * sin_x + z * cos_x
+        
+        # Rotación alrededor de Z (roll)
+        if abs(angle_z) > 0.00001:
+            cos_z = np.cos(angle_z)
+            sin_z = np.sin(angle_z)
+            x = new_pos[0]
+            y = new_pos[1]
+            new_pos[0] = x * cos_z - y * sin_z
+            new_pos[1] = x * sin_z + y * cos_z
+        
+        # Trasladar de vuelta
+        new_pos += self.center
+        
+        # Delta es la diferencia
+        delta.position = new_pos - current_position
+        
+        return delta
+    
+    def set_rotation_speeds(self, speed_x: float = 0.0, speed_y: float = 0.0, speed_z: float = 0.0):
+        """Actualiza las velocidades de rotación"""
+        self.speed_x = float(speed_x)
+        self.speed_y = float(speed_y)
+        self.speed_z = float(speed_z)
+        self.enabled = any(abs(s) > 0.001 for s in [speed_x, speed_y, speed_z])
+
+
+class ManualIndividualRotation(MotionComponent):
+    """Rotación manual con interpolación para fuentes individuales"""
+    
+    def __init__(self, center: Optional[np.ndarray] = None):
+        """
+        Args:
+            center: Centro de rotación (default: origen de la fuente)
+        """
+        super().__init__()
+        self.center = np.array(center if center is not None else [0.0, 0.0, 0.0])
+        
+        # Ángulos objetivo y actuales
+        self.target_yaw = 0.0
+        self.target_pitch = 0.0
+        self.target_roll = 0.0
+        
+        self.current_yaw = 0.0
+        self.current_pitch = 0.0
+        self.current_roll = 0.0
+        
+        # Velocidad de interpolación
+        self.interpolation_speed = 0.1
+        
+        self.enabled = False
+    
+    def set_target_rotation(self, yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0,
+                          interpolation_speed: float = 0.1):
+        """Establece la rotación objetivo"""
+        self.target_yaw = float(yaw)
+        self.target_pitch = float(pitch)
+        self.target_roll = float(roll)
+        self.interpolation_speed = max(0.01, min(1.0, float(interpolation_speed)))
+        self.enabled = True
+    
+    def update(self, current_time: float, dt: float):
+        """Actualiza los ángulos actuales interpolando hacia el objetivo"""
+        if not self.enabled:
+            return
+        
+        # Interpolación suave hacia los ángulos objetivo
+        factor = self.interpolation_speed
+        self.current_yaw += (self.target_yaw - self.current_yaw) * factor
+        self.current_pitch += (self.target_pitch - self.current_pitch) * factor
+        self.current_roll += (self.target_roll - self.current_roll) * factor
+        
+        # Verificar si llegamos al objetivo
+        diff_yaw = abs(self.target_yaw - self.current_yaw)
+        diff_pitch = abs(self.target_pitch - self.current_pitch)
+        diff_roll = abs(self.target_roll - self.current_roll)
+        
+        if diff_yaw < 0.001 and diff_pitch < 0.001 and diff_roll < 0.001:
+            self.current_yaw = self.target_yaw
+            self.current_pitch = self.target_pitch
+            self.current_roll = self.target_roll
+            self.enabled = False
+    
+    def calculate_delta(self, state: 'MotionState', current_time: float, dt: float) -> Optional['MotionDelta']:
+        """Calcula el cambio para rotación manual individual"""
+        if not self.enabled:
+            return None
+            
+        from trajectory_hub.core import MotionDelta
+        delta = MotionDelta()
+        
+        # Posición actual y relativa
+        current_position = np.array(state.position)
+        relative_pos = current_position - self.center
+        
+        # Si está en el centro, no rotar
+        if np.linalg.norm(relative_pos) < 0.001:
+            return None
+        
+        # Para rotación individual, usamos un enfoque diferente:
+        # Calculamos la posición objetivo basada en los ángulos actuales
+        
+        # Convertir a coordenadas esféricas
+        r = np.linalg.norm(relative_pos)
+        theta = np.arctan2(relative_pos[1], relative_pos[0])  # Ángulo en XY
+        phi = np.arctan2(relative_pos[2], np.sqrt(relative_pos[0]**2 + relative_pos[1]**2))  # Elevación
+        
+        # Aplicar rotaciones (simplificado para yaw primero)
+        new_theta = theta + (self.current_yaw - theta) * self.interpolation_speed
+        
+        # Convertir de vuelta a cartesianas
+        xy_dist = r * np.cos(phi)
+        new_x = xy_dist * np.cos(new_theta)
+        new_y = xy_dist * np.sin(new_theta)
+        new_z = r * np.sin(phi)  # Por ahora sin pitch/roll
+        
+        # Nueva posición absoluta
+        new_position = self.center + np.array([new_x, new_y, new_z])
+        
+        # Delta
+        delta.position = new_position - current_position
+        
+        # Limitar el delta para evitar saltos
+        max_delta = 0.1
+        delta_magnitude = np.linalg.norm(delta.position)
+        if delta_magnitude > max_delta:
+            delta.position = delta.position * (max_delta / delta_magnitude)
+        
+        return delta
+    
+    def _sync_with_state(self, state: 'MotionState'):
+        """Sincroniza los ángulos actuales con la posición del estado"""
+        relative_pos = np.array(state.position) - self.center
+        if np.linalg.norm(relative_pos) > 0.001:
+            self.current_yaw = np.arctan2(relative_pos[1], relative_pos[0])
+            # Simplificado: solo sincronizamos yaw por ahora
+
+
+class GroupBehavior(MotionComponent):
+    """
+    Nivel 4: Comportamiento de grupo
+    Define cómo interactúan las fuentes entre sí
+    """
+    
+    def __init__(self):
+        super().__init__("group_behavior")
+        self.behavior_type = "independent"
+        self.cohesion = 0.5
+        self.separation = 0.5
+        self.alignment = 0.5
+        
+    def set_behavior(self, behavior_type: str, **params):
+        """Configurar tipo de comportamiento grupal"""
+        self.behavior_type = behavior_type
+        self.cohesion = params.get('cohesion', 0.5)
+        self.separation = params.get('separation', 0.5)
+        self.alignment = params.get('alignment', 0.5)
+        
+    def update(self, time: float, dt: float, state: MotionState, 
+               neighbors: List[MotionState] = None) -> MotionState:
+        """
+        Actualizar considerando estados vecinos
+        neighbors: lista de estados de otras fuentes en el grupo
+        """
+        if not self.enabled or not neighbors:
+            return state
+            
+        if self.behavior_type == "flock":
+            # Implementar comportamiento de bandada
+            center = np.mean([n.position for n in neighbors], axis=0)
+            avg_vel = np.mean([n.velocity for n in neighbors], axis=0)
+            
+            # Cohesión: moverse hacia el centro del grupo
+            cohesion_force = (center - state.position) * self.cohesion
+            
+            # Separación: evitar colisiones
+            separation_force = np.zeros(3)
+            for neighbor in neighbors:
+                diff = state.position - neighbor.position
+                dist = np.linalg.norm(diff)
+                if 0 < dist < 2.0:  # Radio de separación
+                    separation_force += diff / (dist * dist)
+            separation_force *= self.separation
+            
+            # Alineación: match velocidad promedio
+            alignment_force = (avg_vel - state.velocity) * self.alignment
+            
+            # Aplicar fuerzas
+            total_force = cohesion_force + separation_force + alignment_force
+            state.velocity += total_force * dt
+            state.velocity = np.clip(state.velocity, -5.0, 5.0)  # Limitar velocidad
+            
+        elif self.behavior_type == "rigid":
+            # Mantener formación rígida
+            pass
+            
+        elif self.behavior_type == "elastic":
+            # Conexiones elásticas entre fuentes
+            pass
+            
+        elif self.behavior_type == "swarm":
+            # Enjambre caótico
+            pass
+            
+        return state
+
+class EnvironmentalForces(MotionComponent):
+    """
+    Nivel 5: Fuerzas ambientales
+    Viento, gravedad, atractores, etc.
+    """
+    
+    def __init__(self):
+        super().__init__("environmental_forces")
+        self.forces = []
+        
+    def add_force(self, force_type: str, **params):
+        """Añadir una fuerza ambiental"""
+        force = {
+            'type': force_type,
+            'params': params,
+            'enabled': True
+        }
+        self.forces.append(force)
+        return len(self.forces) - 1
+        
+    def remove_force(self, index: int):
+        """Eliminar una fuerza"""
+        if 0 <= index < len(self.forces):
+            self.forces.pop(index)
+            
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        if not self.enabled:
+            return state
+            
+        for force in self.forces:
+            if not force['enabled']:
+                continue
+                
+            if force['type'] == 'gravity':
+                strength = force['params'].get('strength', 9.8)
+                direction = force['params'].get('direction', np.array([0, 0, -1]))
+                state.velocity += direction * strength * dt
+                
+            elif force['type'] == 'wind':
+                direction = force['params'].get('direction', np.array([1, 0, 0]))
+                strength = force['params'].get('strength', 1.0)
+                turbulence = force['params'].get('turbulence', 0.1)
+                
+                wind = direction * strength
+                wind += (np.random.random(3) - 0.5) * turbulence
+                state.velocity += wind * dt
+                
+            elif force['type'] == 'attractor':
+                position = force['params'].get('position', np.zeros(3))
+                strength = force['params'].get('strength', 1.0)
+                
+                diff = position - state.position
+                dist = np.linalg.norm(diff)
+                if dist > 0.1:
+                    force_vec = diff / dist * strength / (dist + 1)
+                    state.velocity += force_vec * dt
+                    
+            elif force['type'] == 'vortex':
+                center = force['params'].get('center', np.zeros(3))
+                axis = force['params'].get('axis', np.array([0, 0, 1]))
+                strength = force['params'].get('strength', 1.0)
+                
+                # Vector desde el centro al punto
+                to_point = state.position - center
+                
+                # Componente perpendicular al eje
+                perp = to_point - np.dot(to_point, axis) * axis
+                perp_norm = np.linalg.norm(perp)
+                
+                if perp_norm > 0.1:
+                    # Dirección tangencial
+                    tangent = np.cross(axis, perp / perp_norm)
+                    state.velocity += tangent * strength / (perp_norm + 1) * dt
+                    
+        return state
+
+# ========== CLASES PARA COMPATIBILIDAD CON enhanced_trajectory_engine ==========
+
+# Movido a movement_modes.py
+# class TrajectoryMovementMode(Enum):
+#     """Modos de movimiento en la trayectoria"""
+#     STOP = "stop"
+#     FIX = "fix"
+#     RANDOM = "random"
+#     VIBRATION = "vibration"
+#     SPIN = "spin"
+#     FREEZE = "freeze"
+
+class TrajectoryDisplacementMode(Enum):
+    """Modos de desplazamiento de trayectoria"""
+    RELATIVE = "relative"
+    ABSOLUTE = "absolute"
+
+class TrajectoryTransform(MotionComponent):
+    """Transformación de trayectoria para offset y desplazamiento"""
+    
+    def __init__(self):
+        super().__init__("trajectory_transform")
+        self.displacement_mode = TrajectoryDisplacementMode.RELATIVE
+        self.offset = np.zeros(3)
+        self.macro_reference = np.zeros(3)
+        self.macro_velocity = np.zeros(3)
+        
+    def set_offset(self, offset):
+        """Establecer offset (puede ser array o función)"""
+        self.offset = offset
+        
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        if not self.enabled:
+            return state
+            
+        # Calcular offset actual
+        if callable(self.offset):
+            current_offset = self.offset(current_time)
+        else:
+            current_offset = self.offset
+            
+        if self.displacement_mode == TrajectoryDisplacementMode.ABSOLUTE:
+            state.position = current_offset
+        else:
+            state.position = state.position + current_offset + self.macro_reference
+            
+        return state
+
+    def __init__(self, source_id: int):
+        self.source_id = source_id
+        self.state = MotionState()
+        self.active_components = {}  # Lista de componentes activos
+        
+    def add_component(self, component):
+        """Añade un componente de movimiento"""
+        if component not in self.active_components:
+            self.active_components.append(component)
+
+class ConcentrationComponent(MotionComponent):
+    """
+    Componente que maneja la concentración/dispersión de fuentes
+    Se aplica como último paso después de todos los demás movimientos
+    """
+    
+    def __init__(self):
+        super().__init__("concentration")
+        
+        # Parámetros principales
+        self.factor = 1.0  # 0=concentrado, 1=disperso
+        self.target_point = np.zeros(3)
+        self.mode = ConcentrationMode.FIXED_POINT
+        
+        # Control de animación
+        self.animation_active = False
+        self.animation_start_factor = 1.0
+        self.animation_target_factor = 0.0
+        self.animation_duration = 2.0
+        self.animation_elapsed = 0.0
+        self.animation_curve = ConcentrationCurve.EASE_IN_OUT
+        
+        # Parámetros avanzados
+        self.include_macro_trajectory = True
+        self.attenuate_rotations = True
+        self.attenuate_modulations = True
+        self.concentration_order = "uniform"
+        
+        # Cache
+        self._macro_center = np.zeros(3)
+        self._source_distances = {}
+        
+    def calculate_delta(self, state: MotionState, current_time: float, dt: float) -> MotionDelta:
+        """Calcula el delta de movimiento hacia el punto objetivo"""
+        if not self.enabled:
+            return MotionDelta(position=np.zeros(3))
+        
+        # Usar la posición actual del state
+        current_pos = state.position
+        
+        # El target es target_point (hacia donde queremos concentrar)
+        target = self.target_point
+        
+        # Calcular dirección y distancia
+        direction = target - current_pos
+        distance = np.linalg.norm(direction)
+        
+        # Si ya estamos en el target, no hay movimiento
+        if distance < 0.001:
+            return MotionDelta(position=np.zeros(3))
+        
+        # Calcular movimiento basado en el factor y dt
+        movement = direction * self.concentration_factor * dt
+        
+        # Limitar el movimiento para no pasarnos del target
+        movement_distance = np.linalg.norm(movement)
+        if movement_distance > distance:
+            movement = direction * (distance / np.linalg.norm(direction))
+        
+        return MotionDelta(
+            position=movement,
+            source='concentration',
+            weight=self.weight
+        )
+    def update(self, state: MotionState, current_time: float, dt: float) -> MotionState:
+        """Actualizar el componente de concentración"""
+        if not self.enabled:
+            return state
+            
+        # Actualizar animación
+        if self.animation_active:
+            self.animation_elapsed += dt
+            progress = min(self.animation_elapsed / self.animation_duration, 1.0)
+            
+            # Aplicar curva
+            curved_progress = self._apply_curve(progress, self.animation_curve)
+            
+            # Interpolar factor
+            self.factor = self.animation_start_factor + \
+                         (self.animation_target_factor - self.animation_start_factor) * curved_progress
+            
+            if progress >= 1.0:
+                self.animation_active = False
+                
+        # No hacer nada si completamente disperso
+        if abs(self.factor - 1.0) < 0.001:
+            return state
+            
+        # Calcular punto objetivo
+        if self.mode == ConcentrationMode.FOLLOW_MACRO:
+            target = self._macro_center + self.target_point
+        else:
+            target = self.target_point
+            
+        # Aplicar concentración
+        concentration_strength = 1.0 - self.factor
+        state.position = self._lerp(state.position, target, concentration_strength)
+        
+        # Atenuar velocidad
+        state.velocity *= self.factor
+        
+        # Atenuar orientación si está habilitado
+        if self.attenuate_rotations:
+            state.orientation *= self.factor
+            
+        return state
+        
+    def start_animation(self, target_factor: float, duration: float, 
+                       curve: ConcentrationCurve = ConcentrationCurve.EASE_IN_OUT):
+        """Iniciar animación de concentración"""
+        self.animation_start_factor = self.factor
+        self.animation_target_factor = max(0.0, min(1.0, target_factor))
+        self.animation_duration = max(0.1, duration)
+        self.animation_elapsed = 0.0
+        self.animation_curve = curve
+        self.animation_active = True
+        self.enabled = True
+        
+    def set_factor(self, factor: float):
+        """Establecer factor inmediatamente"""
+        self.factor = max(0.0, min(1.0, factor))
+        self.animation_active = False
+        self.enabled = True
+        
+    def update_macro_center(self, center: np.ndarray):
+        """Actualizar centro del macro"""
+        self._macro_center = center.copy()
+        
+    def _lerp(self, a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
+        """Interpolación lineal"""
+        return a + (b - a) * t
+        
+    def _apply_curve(self, t: float, curve: ConcentrationCurve) -> float:
+        """Aplicar curva de animación"""
+        if curve == ConcentrationCurve.LINEAR:
+            return t
+        elif curve == ConcentrationCurve.EASE_IN:
+            return t * t
+        elif curve == ConcentrationCurve.EASE_OUT:
+            return 1 - (1 - t) * (1 - t)
+        elif curve == ConcentrationCurve.EASE_IN_OUT:
+            if t < 0.5:
+                return 2 * t * t
+            else:
+                return 1 - 2 * (1 - t) * (1 - t)
+        elif curve == ConcentrationCurve.EXPONENTIAL:
+            return t * t * t
+        elif curve == ConcentrationCurve.BOUNCE:
+            if t < 0.5:
+                return 4 * t * t * t
+            else:
+                p = 2 * t - 2
+                return 1 + p * p * p / 2
+        return t
+

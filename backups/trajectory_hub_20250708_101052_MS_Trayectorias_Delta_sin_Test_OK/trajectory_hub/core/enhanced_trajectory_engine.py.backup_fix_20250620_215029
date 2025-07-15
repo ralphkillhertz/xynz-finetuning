@@ -1,0 +1,1607 @@
+"""
+enhanced_trajectory_engine.py - Motor de trayectorias con sistema de componentes completo
+Evolución de extended_path_engine.py que mantiene compatibilidad e integra motion_components
+"""
+from __future__ import annotations
+import numpy as np
+import logging
+import time
+from typing import Dict, List, Optional, Callable, Set, Tuple, Any
+from dataclasses import dataclass, field
+
+# Importar el sistema de componentes
+from trajectory_hub.core.motion_components import (
+    SourceMotion, TrajectoryMovementMode, TrajectoryDisplacementMode,
+    OrientationModulation, IndividualTrajectory, TrajectoryTransform,
+    MacroTrajectory, create_complex_movement, MotionState,
+    AdvancedOrientationModulation
+)
+from trajectory_hub.core.trajectory_deformers import (
+    CompositeDeformer, ForceFieldDeformation, WaveDeformation,
+    ChaoticDeformation, GestureDeformation, BlendMode
+)
+# Mantener compatibilidad con el sistema anterior
+from trajectory_hub.core.extended_path_engine import (
+    BoidParams, SourceInfo, MacroSource,
+    _NUMBA_AVAILABLE, _BEHAVIORS_AVAILABLE
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class EnhancedMacroSource(MacroSource):
+    """Versión mejorada de MacroSource con soporte para el nuevo sistema"""
+
+    # Campos base heredados de MacroSource
+    name: str = ""
+    behavior_name: str = "flock"
+
+    # Componente de trayectoria macro
+    trajectory_component: Optional[MacroTrajectory] = None
+    
+    # Configuración de trayectorias individuales
+    individual_trajectories: Dict[int, str] = field(default_factory=dict)  # source_id: shape_type
+    allow_different_trajectories: bool = False
+    
+    # Estado de concentración
+    concentration_active: bool = False
+    concentration_point: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    concentration_duration: float = 1.0
+    
+    # Deformador
+    deformer: Optional[CompositeDeformer] = None
+    deformation_enabled: bool = False
+
+    def __post_init__(self):
+        """Inicializar la clase padre MacroSource y configurar componentes"""
+        # Inicializar los atributos de MacroSource de forma segura
+        try:
+            # Usar los valores por defecto si no están establecidos
+            macro_id = getattr(self, 'id', f"macro_{id(self)}")
+            name = getattr(self, 'name', f"Macro_{macro_id}")
+            behavior = getattr(self, 'behavior_name', 'flock')
+            
+            # Llamar al constructor padre
+            super().__init__(macro_id, name, behavior)
+        except Exception as e:
+            # Si hay algún problema, inicializar manualmente los atributos críticos
+            logger.warning(f"Error en __post_init__: {e}. Inicializando manualmente.")
+            if not hasattr(self, 'source_ids'):
+                self.source_ids = set()
+            if not hasattr(self, 'behavior'):
+                self.behavior = None
+                
+        # Asegurar que trajectory_component se inicialice
+        if self.trajectory_component is None:
+            from trajectory_hub.core.motion_components import MacroTrajectory
+            self.trajectory_component = MacroTrajectory()
+
+
+class EnhancedTrajectoryEngine:
+    pass
+    """
+    Motor de trayectorias mejorado que integra el sistema de componentes
+    Mantiene compatibilidad con la API anterior mientras añade nuevas capacidades
+    """
+    
+    def __init__(self, max_sources: int = 64, fps: int = 60, 
+                 params: Optional[BoidParams] = None,
+                 use_legacy_mode: bool = False,
+                 enable_modulator: bool = True):
+        """
+        Parameters
+        ----------
+        max_sources : int
+            Número máximo de fuentes
+        fps : int
+            Frames por segundo
+        params : BoidParams
+            Parámetros de comportamiento boids
+        use_legacy_mode : bool
+            Si True, usa el comportamiento anterior (para compatibilidad)
+        enable_modulator : bool
+            Si True, habilita el sistema de modulación de orientación
+        """
+        self.max_sources = max_sources
+        self.fps = fps
+        self.dt = 1.0 / fps
+        self.params = params or BoidParams()
+        self.use_legacy_mode = use_legacy_mode
+        self.enable_modulator = enable_modulator
+        
+        # Sistema de componentes nuevo
+        self._source_motions: Dict[int, SourceMotion] = {}
+        
+        # Información de fuentes y macros (compatible con versión anterior)
+        self._source_info: Dict[int, SourceInfo] = {}
+        self._macros: Dict[str, EnhancedMacroSource] = {}
+        
+        # Estado interno
+        self._time = 0.0
+        self._frame_count = 0
+        
+        # Arrays para compatibilidad y optimización
+        self._positions = np.zeros((max_sources, 3), dtype=np.float32)
+        self._orientations = np.zeros((max_sources, 3), dtype=np.float32)
+        self._apertures = np.ones(max_sources, dtype=np.float32) * 0.5
+        
+        # Sistema de deformadores global
+        self.global_deformer = CompositeDeformer()
+        self.global_modulator_intensity = 1.0
+        self.global_modulator_enabled = True
+        self.orientation_modulators = {}
+        self._current_time = 0.0
+        self.update_lock = False
+        self.selected_sources = set()
+        self.osc_bridge = None  # Se debe configurar externamente
+        self.global_modulator_preset = "subtle"
+        self._last_orientations = {}  # Para tracking de orientaciones
+        self._orientation_update_threshold = 0.01  # Umbral para actualizar orientación
+        self._aperture_update_threshold = 0.01  # Umbral para actualizar apertura
+        self._last_apertures = {}
+        self._last_velocities = {}
+        self._last_update_time = 0.0
+
+
+    def update(self, dt: Optional[float] = None) -> None:
+
+
+
+        """
+
+
+
+        Actualizar todas las fuentes y sus componentes
+
+
+
+        
+
+
+
+        Parameters
+
+
+
+        ----------
+
+
+
+        dt : float, optional
+
+
+
+            Delta time. Si no se proporciona, usa self.dt
+
+
+
+        """
+
+
+
+        if dt is None:
+
+
+
+            dt = self.dt
+
+
+
+            
+
+
+
+        current_time = getattr(self, '_current_time', 0.0)
+
+
+
+        self._current_time = current_time + dt
+
+
+
+        
+
+
+
+        # IMPORTANTE: Primero actualizar los SourceMotion
+
+
+
+        if hasattr(self, '_source_motions'):
+
+
+
+            for source_id, motion in self._source_motions.items():
+
+
+
+                # Actualizar el motion con todos sus componentes
+
+
+
+                position, orientation, aperture = motion.update(self._current_time, dt)
+
+
+
+                
+
+
+
+                # Guardar las nuevas posiciones
+
+
+
+                if hasattr(self, '_positions'):
+
+
+
+                    self._positions[source_id] = position
+
+
+
+                
+
+
+
+                # Actualizar _source_info si existe
+
+
+
+                if hasattr(self, '_source_info') and source_id in self._source_info:
+
+
+
+                    self._source_info[source_id].position = position.copy()
+
+
+
+        
+
+
+
+        # DESPUÉS actualizar con el sistema heredado si es necesario
+
+
+
+        try:
+
+
+
+            super().update(dt)
+
+
+
+        except Exception:
+
+
+
+            # Si hay error en super().update(), continuar
+
+
+
+            pass
+
+
+
+        
+
+
+
+        # Enviar datos OSC si hay bridge configurado
+
+
+
+        if hasattr(self, 'osc_bridge') and self.osc_bridge:
+
+
+
+            try:
+
+
+
+                # Recolectar datos de todas las fuentes
+
+
+
+                source_data = []
+
+
+
+                for source_id in self._source_motions:
+
+
+
+                    if source_id in self._positions:
+
+
+
+                        position = self._positions[source_id]
+
+
+
+                    else:
+
+
+
+                        position = self._source_motions[source_id].state.position
+
+
+
+                    
+
+
+
+                    motion = self._source_motions[source_id]
+
+
+
+                    orientation = motion.state.orientation
+
+
+
+                    aperture = motion.state.aperture
+
+
+
+                    
+
+
+
+                    source_data.append({
+
+
+
+                        'id': source_id,
+
+
+
+                        'xyz': position,
+
+
+
+                        'ypr': orientation,
+
+
+
+                        'aperture': aperture
+
+
+
+                    })
+
+
+
+                
+
+
+
+                # Enviar batch
+
+
+
+                if source_data:
+
+
+
+                    self.osc_bridge.send_batch(source_data)
+
+
+
+            except Exception:
+
+
+
+                pass  # Ignorar errores de OSC
+
+    def set_osc_bridge(self, bridge):
+        pass  # TODO: Implementar
+        """
+        Configurar el bridge OSC para envío de datos
+        
+        Parameters
+        ----------
+        bridge : SpatOSCBridge
+        Bridge OSC para comunicación con Spat
+        """
+        self.osc_bridge = bridge
+        logger.info("OSC Bridge configurado en EnhancedTrajectoryEngine")
+
+        def update(self, dt: Optional[float] = None) -> None:
+            pass  # TODO: Implementar
+            """
+            Actualizar todas las fuentes y sus componentes
+        
+            Parameters
+            ----------
+            dt : float, optional
+            Delta time. Si no se proporciona, usa self.dt
+            """
+        if dt is None:
+            dt = self.dt
+            
+        current_time = getattr(self, '_current_time', 0.0)
+        self._current_time = current_time + dt
+        
+        # IMPORTANTE: Primero actualizar los SourceMotion
+        for source_id, motion in self._source_motions.items():
+            # Actualizar el motion con todos sus componentes
+            position, orientation, aperture = motion.update(self._current_time, dt)
+            
+            # Guardar las nuevas posiciones
+            if hasattr(self, '_positions'):
+                self._positions[source_id] = position
+            
+            # Actualizar _source_info si existe
+            if hasattr(self, '_source_info') and source_id in self._source_info:
+                self._source_info[source_id].position = position.copy()
+        
+        # DESPUÉS actualizar con el sistema heredado si es necesario
+        try:
+            super().update(dt)
+        except Exception:
+            # Si hay error en super().update(), continuar
+            pass
+        
+        # Enviar datos OSC si hay bridge configurado
+        if hasattr(self, 'osc_bridge') and self.osc_bridge:
+            try:
+                # Recolectar datos de todas las fuentes
+                source_data = []
+                for source_id in self._source_motions:
+                    if source_id in self._positions:
+                        position = self._positions[source_id]
+                    else:
+                        position = self._source_motions[source_id].state.position
+                    
+                    motion = self._source_motions[source_id]
+                    orientation = motion.state.orientation
+                    aperture = motion.state.aperture
+                    
+                    source_data.append({
+                        'id': source_id,
+                        'xyz': position,
+                        'ypr': orientation,
+                        'aperture': aperture
+                    })
+                
+                # Enviar batch
+                if source_data:
+                    self.osc_bridge.send_batch(source_data)
+            except Exception:
+                pass  # Ignorar errores de OSC
+
+
+    def create_source(self, source_id: int, name: Optional[str] = None) -> SourceMotion:
+        pass  # TODO: Implementar
+        """
+        Crear una nueva fuente con sistema de componentes
+        
+        Parameters
+        ----------
+        source_id : int
+        ID único de la fuente
+        name : str, optional
+        Nombre de la fuente
+            
+        Returns
+        SourceMotion
+        Objeto de movimiento creado
+        """
+        if source_id >= self.max_sources:
+            raise ValueError(f"ID {source_id} excede el máximo de fuentes ({self.max_sources})")
+            
+        if source_id in self._source_motions:
+            logger.warning(f"Fuente {source_id} ya existe, retornando existente")
+            return self._source_motions[source_id]
+            
+        # Crear objeto de movimiento
+        motion = SourceMotion(source_id)
+        
+        # Configurar posición inicial aleatoria
+        angle = np.random.uniform(0, 2 * np.pi)
+        radius = np.random.uniform(1, 3)
+        motion.state.position = np.array([
+            radius * np.cos(angle),
+            radius * np.sin(angle),
+            np.random.uniform(-0.5, 0.5)
+        ])
+        
+        # Registrar en el sistema
+        self._source_motions[source_id] = motion
+        self._positions[source_id] = motion.state.position
+        
+        # Crear info para compatibilidad
+        info = SourceInfo(
+            id=str(source_id),
+            name=name or f"Source_{source_id}",
+            position=motion.state.position.copy()
+        )
+        self._source_info[source_id] = info
+        
+        # Crear modulador de orientación si está habilitado
+        if self.enable_modulator:
+            self.create_orientation_modulator(source_id)
+        
+        logger.info(f"Fuente {source_id} creada: {info.name}")
+        return motion
+
+    def create_orientation_modulator(self, source_id: int) -> Optional[AdvancedOrientationModulation]:
+        """Crear modulador de orientación para una fuente"""
+        if not self.enable_modulator:
+            return None
+            
+        if source_id not in self._source_motions:
+            logger.error(f"No se puede crear modulador para fuente inexistente {source_id}")
+            return None
+            
+        # Crear modulador avanzado
+        modulator = AdvancedOrientationModulation()
+        modulator.source_id = source_id
+        
+        # Configurar con intensidad global
+        modulator.intensity = self.global_modulator_intensity
+        
+        # Registrar
+        self.orientation_modulators[source_id] = modulator
+        
+        logger.debug(f"Modulador de orientación creado para fuente {source_id}")
+        return modulator
+        return True
+
+    def create_macro(
+        self, 
+        name: str, 
+        source_count: int, 
+        behavior: str = "flock",
+        formation: str = "circle",
+        spacing: float = 2.0,
+        **kwargs
+    ) -> str:
+        """
+        Crear un macro (grupo de fuentes)
+        
+        Parameters
+        ----------
+        name : str
+            Nombre del macro
+        source_count : int
+            Número de fuentes en el macro
+        behavior : str
+            Tipo de comportamiento (flock, rigid, orbit, etc.)
+        formation : str
+            Formación inicial (circle, line, grid, spiral)
+        spacing : float
+            Espaciado entre fuentes
+            
+        str
+            ID del macro creado
+        """
+        # Generar ID único
+        macro_id = f"macro_{len(self._macros)}_{name.lower().replace(' ', '_')}"
+        
+    # Manejar tanto int como list
+    if isinstance(source_count_or_ids, list):
+        # Si es una lista, usar esos IDs directamente
+        source_ids = source_count_or_ids
+        logger.info(f"Usando {len(source_ids)} fuentes existentes para el macro")
+    else:
+        # Si es un número, crear nuevas fuentes
+        source_count = source_count_or_ids
+        source_ids = []
+        start_id = len(self._source_motions)
+        
+        # Crear conjunto de fuentes
+        source_ids = []
+        start_id = len(self._source_motions)
+        
+        for i in range(source_count):
+            sid = start_id + i
+            if sid < self.max_sources:
+                self.create_source(sid, f"{name}_{i}")
+                source_ids.append(sid)
+        
+        # Crear macro con los campos necesarios
+        macro = EnhancedMacroSource()
+        
+        # Establecer campos base
+        macro.id = macro_id
+        macro.name = name
+        macro.behavior_name = behavior
+        
+        # Establecer campos opcionales
+        if 'allow_different_trajectories' in kwargs:
+            macro.allow_different_trajectories = kwargs['allow_different_trajectories']
+        
+        # Añadir fuentes al macro
+        for sid in source_ids:
+            macro.add_source(sid)
+            if sid in self._source_info:
+                self._source_info[sid].macro_id = macro_id
+                
+        # Crear componente de trayectoria macro
+        macro.trajectory_component = MacroTrajectory()
+        
+        # Aplicar formación inicial
+        self._apply_formation(source_ids, formation, spacing)
+        
+        # Registrar macro
+        self._macros[macro_id] = macro
+        
+        logger.info(f"Macro '{name}' creado con {len(source_ids)} fuentes")
+        
+        # Crear moduladores de orientación si está habilitado
+        if self.enable_modulator:
+            for i, sid in enumerate(source_ids):
+                modulator = self.create_orientation_modulator(sid)
+                if modulator:
+                    # Desfase temporal para efecto orgánico
+                    modulator.time_offset = i * 0.05
+                
+        # Si hay un preset global configurado, aplicarlo
+        if self.global_modulator_preset:
+            self.apply_orientation_preset(macro_id, self.global_modulator_preset)
+            
+        return macro_id
+
+    def _apply_formation(self, source_ids: List[int], formation: str, spacing: float):
+        """Aplicar formación inicial a un conjunto de fuentes"""
+        total = len(source_ids)
+        
+        for index, sid in enumerate(source_ids):
+            if sid not in self._source_motions:
+                continue
+                
+            motion = self._source_motions[sid]
+            
+            if formation == "circle":
+                angle = (index / total) * 2 * np.pi
+                position = np.array([
+                    spacing * np.cos(angle),
+                    spacing * np.sin(angle),
+                    0
+                ])
+            elif formation == "line":
+                position = np.array([
+                    (index - total/2) * spacing,
+                    0,
+                    0
+                ])
+            elif formation == "grid":
+                side = int(np.ceil(np.sqrt(total)))
+                x = (index % side - side/2) * spacing
+                y = (index // side - side/2) * spacing
+                position = np.array([x, y, 0])
+            else:  # spiral
+                angle = index * 0.5
+                radius = spacing * (1 + index * 0.1)
+                position = np.array([
+                    radius * np.cos(angle),
+                    radius * np.sin(angle),
+                    index * 0.1
+                ])
+                
+            motion.state.position = position
+            self._positions[motion.id] = position
+
+    def set_individual_trajectory(
+        self,
+        source_id: int,
+        shape: str,
+        movement_mode: TrajectoryMovementMode = TrajectoryMovementMode.FIX,
+        **params
+    ):
+        """Configurar trayectoria individual de una fuente"""
+        if source_id not in self._source_motions:
+            logger.error(f"Fuente {source_id} no existe")
+            return
+            
+        motion = self._source_motions[source_id]
+        traj = motion.components.get('individual_trajectory')
+        
+        if isinstance(traj, IndividualTrajectory):
+            # Cambiar forma usando set_trajectory
+            traj.set_trajectory(shape, **params)
+            traj.shape_type = shape
+            
+            # Configurar modo de movimiento
+            if hasattr(traj, 'set_movement_mode'):
+                traj.set_movement_mode(movement_mode, **params)
+            else:
+                # Configurar manualmente si no tiene el método
+                traj.movement_mode = movement_mode
+                if movement_mode == TrajectoryMovementMode.FIX:
+                    traj.movement_speed = params.get('movement_speed', 1.0)
+                elif movement_mode == TrajectoryMovementMode.VIBRATION:
+                    traj.vibration_frequency = params.get('vibration_frequency', 2.0)
+                    traj.vibration_amplitude = params.get('vibration_amplitude', 0.1)
+                # etc...
+            
+            logger.info(f"Trayectoria individual configurada: {shape} con modo {movement_mode.value}")
+
+
+
+    def update(self, dt: Optional[float] = None) -> None:
+        pass  # TODO: Implementar
+        """
+        Actualizar todas las fuentes y sus componentes
+        
+        Parameters
+        ----------
+        dt : float, optional
+        Delta time. Si no se proporciona, usa self.dt
+        """
+        if dt is None:
+            dt = self.dt
+            
+        current_time = getattr(self, '_current_time', 0.0)
+        self._current_time = current_time + dt
+        
+        # Primero actualizar con el sistema heredado
+        try:
+            super().update(dt)
+        except:
+            pass
+        
+        # Luego actualizar los componentes de movimiento
+        for source_id, motion in self._source_motions.items():
+            # Actualizar el motion con todos sus componentes
+            position, orientation, aperture = motion.update(self._current_time, dt)
+            
+            # Actualizar las posiciones en el sistema
+            self._positions[source_id] = position
+            
+            # Si existe en _source_info, actualizar también ahí
+            if source_id in self._source_info:
+                self._source_info[source_id].position = position.copy()
+
+    def get_source_info(self, source_id: int) -> Dict[str, Any]:
+        pass  # TODO: Implementar
+        """
+        Obtener información detallada de una fuente
+        
+        Parameters
+        ----------
+        source_id : int
+        ID de la fuente
+            
+        Returns
+        -------
+        Dict[str, Any]
+        Información de la fuente
+        """
+        if source_id not in self._source_motions:
+            return {"error": "Fuente no encontrada"}
+            
+        motion = self._source_motions[source_id]
+        info = {
+            "id": source_id,
+            "position": motion.state.position.tolist(),
+            "orientation": motion.state.orientation.tolist(),
+            "aperture": motion.state.aperture,
+            "components": {}
+        }
+        
+        for name, component in motion.components.items():
+            comp_info = {
+                "enabled": component.enabled,
+                "weight": component.weight
+            }
+            
+            if isinstance(component, IndividualTrajectory):
+                comp_info.update({
+                    "shape": getattr(component, 'shape_type', 'unknown'),
+                    "movement_mode": getattr(component, 'movement_mode', TrajectoryMovementMode.FIX).value if hasattr(component, 'movement_mode') else 'fix',
+                    "position_on_trajectory": getattr(component, 'position_on_trajectory', 0.0)
+                })
+            elif isinstance(component, TrajectoryTransform):
+                comp_info.update({
+                    "displacement_mode": component.displacement_mode.value,
+                    "offset": component.offset.tolist() if isinstance(component.offset, np.ndarray) else str(component.offset)
+                })
+            elif isinstance(component, OrientationModulation):
+                comp_info.update({
+                    "has_yaw": component.yaw_func is not None,
+                    "has_pitch": component.pitch_func is not None,
+                    "has_roll": component.roll_func is not None
+                })
+                
+            info["components"][name] = comp_info
+            
+        return info
+    def set_macro_trajectory(
+        self,
+        macro_id: str,
+        trajectory_func: Callable[[float], np.ndarray],
+        orientation_func: Optional[Callable[[float], np.ndarray]] = None,
+        enable_deformation: bool = True
+    ):
+        """Establecer trayectoria de un macro completo"""
+        if macro_id not in self._macros:
+            logger.error(f"Macro {macro_id} no existe")
+            return
+            
+        macro = self._macros[macro_id]
+        
+        # Configurar componente de trayectoria
+        if macro.trajectory_component:
+            macro.trajectory_component.set_trajectory(trajectory_func, orientation_func)
+            macro.trajectory_component.enabled = True
+            
+        # Habilitar deformación si se solicita
+        macro.deformation_enabled = enable_deformation
+        
+        logger.info(f"Trayectoria establecida para macro {macro_id}")
+    def set_mixed_trajectories(self, macro_id: str, shape_distribution: List[Tuple[str, float]]):
+        pass  # TODO: Implementar
+        """
+        Asignar diferentes formas de trayectoria a las fuentes de un macro
+        
+        Parameters
+        ----------
+        macro_id : str
+        ID del macro
+        shape_distribution : List[Tuple[str, float]]
+        Lista de (forma, proporción) donde proporción suma 1.0
+        """
+        if macro_id not in self._macros:
+            logger.error(f"Macro {macro_id} no existe")
+            return
+            
+        macro = self._macros[macro_id]
+        macro.allow_different_trajectories = True
+        
+        source_list = list(macro.source_ids)
+        total = len(source_list)
+        
+        # Asignar formas según distribución
+        current_idx = 0
+        for shape, proportion in shape_distribution:
+            count = int(total * proportion)
+            for i in range(count):
+                if current_idx < total:
+                    sid = source_list[current_idx]
+                    macro.individual_trajectories[sid] = shape
+                    
+                    # Configurar la trayectoria individual
+                    if sid in self._source_motions:
+                        motion = self._source_motions[sid]
+                        traj = motion.components.get('individual_trajectory')
+                        if isinstance(traj, IndividualTrajectory):
+                            traj.shape_type = shape
+                            traj.set_trajectory(shape)
+                            
+                    current_idx += 1
+                    
+        logger.info(f"Trayectorias mixtas asignadas a macro {macro_id}")
+
+    def apply_breathing(self, period: float = 5.0, amplitude: float = 1.0, 
+                       macro_id: Optional[str] = None):
+        """Aplicar efecto de respiración (expansión/contracción)"""
+        if macro_id:
+            if macro_id not in self._macro_deformers:
+                self._macro_deformers[macro_id] = CompositeDeformer()
+            deformer = self._macro_deformers[macro_id]
+        else:
+            deformer = self.global_deformer
+            
+        # Crear deformación de respiración
+        breathing = WaveDeformation(
+            wave_type="sine",
+            frequency=1.0 / period,
+            amplitude=amplitude,
+            phase=0.0
+        )
+        breathing.scale_mode = True  # Modo escala
+        
+        deformer.add_deformation("breathing", breathing)
+        logger.info(f"Respiración aplicada: período={period}s, amplitud={amplitude}")
+
+    def apply_concentration(self, macro_id: str, point: np.ndarray, duration: float = 2.0):
+        pass  # TODO: Implementar
+        """
+        Aplicar concentración temporal hacia un punto
+        
+        Parameters
+        ----------
+        macro_id : str
+        ID del macro
+        point : np.ndarray
+        Punto de concentración
+        duration : float
+        Duración de la transición
+        """
+        if macro_id not in self._macros:
+            return
+            
+        macro = self._macros[macro_id]
+        macro.concentration_active = True
+        macro.concentration_point = point.copy()
+        macro.concentration_duration = duration
+        
+        # Aplicar a cada fuente del macro
+        start_time = self._time
+        for sid in macro.source_ids:
+            if sid not in self._source_motions:
+                continue
+                
+            motion = self._source_motions[sid]
+            transform = motion.components.get('trajectory_transform')
+            
+            if isinstance(transform, TrajectoryTransform):
+                # Función de interpolación temporal
+                initial_offset = transform.offset.copy() if isinstance(transform.offset, np.ndarray) else np.zeros(3)
+                target_offset = point - motion.state.position
+                
+                def concentration_func(t):
+                    elapsed = t - start_time
+                    if elapsed >= duration:
+                        return target_offset
+                    factor = elapsed / duration
+                    # Ease in-out
+                    factor = 0.5 * (1 - np.cos(np.pi * factor))
+                    return initial_offset + (target_offset - initial_offset) * factor
+                    
+                transform.offset = concentration_func
+                transform.enabled = True
+
+    def apply_dispersion(self, macro_id: str, force: float = 2.0, duration: float = 1.5):
+        """Aplicar dispersión desde el centro"""
+        if macro_id not in self._macros:
+            return
+            
+        macro = self._macros[macro_id]
+        
+        # Calcular centro actual
+        positions = []
+        for sid in macro.source_ids:
+            if sid in self._positions:
+                positions.append(self._positions[sid])
+                
+        if not positions:
+            return
+            
+        center = np.mean(positions, axis=0)
+        
+        # Aplicar fuerza de dispersión
+        start_time = self._time
+        for sid in macro.source_ids:
+            if sid not in self._source_motions:
+                continue
+                
+            motion = self._source_motions[sid]
+            transform = motion.components.get('trajectory_transform')
+            
+            if isinstance(transform, TrajectoryTransform):
+                # Dirección de dispersión
+                direction = motion.state.position - center
+                if np.linalg.norm(direction) > 0.001:
+                    direction = direction / np.linalg.norm(direction)
+                else:
+                    # Dirección aleatoria si está en el centro
+                    angle = np.random.uniform(0, 2 * np.pi)
+                    direction = np.array([np.cos(angle), np.sin(angle), 0])
+                    
+                initial_offset = transform.offset.copy() if isinstance(transform.offset, np.ndarray) else np.zeros(3)
+                target_offset = direction * force
+                
+                def dispersion_func(t):
+                    elapsed = t - start_time
+                    if elapsed >= duration:
+                        return target_offset
+                    factor = elapsed / duration
+                    # Ease out
+                    factor = 1.0 - (1.0 - factor) ** 2
+                    return initial_offset + (target_offset - initial_offset) * factor
+                    
+                transform.offset = dispersion_func
+                transform.enabled = True
+
+    def apply_orientation_preset(self, macro_id: str, preset_name: str,
+                                       intensity: float = 1.0, 
+                                       time_offset_spread: float = 0.0):
+        """
+        Aplicar un preset de orientación a todas las fuentes de un macro
+        
+        Parameters
+        ----------
+        macro_id : str
+            ID del macro
+        preset_name : str
+            Nombre del preset a aplicar
+        intensity : float, optional
+            Intensidad de la modulación (0.0-1.0), por defecto 1.0
+        time_offset_spread : float, optional
+            Desfase temporal entre fuentes en segundos, por defecto 0.0
+            
+        bool
+            True si se aplicó correctamente, False en caso de error
+        """
+        if macro_id not in self._macros:
+            logger.error(f"Macro {macro_id} no encontrado")
+            return False
+            
+        macro = self._macros[macro_id]
+        
+        for sid in macro.source_ids:
+            if sid in self.orientation_modulators:
+                modulator = self.orientation_modulators[sid]
+                modulator.apply_preset(preset_name)
+                logger.debug(f"Preset '{preset_name}' aplicado a fuente {sid}")
+                
+        logger.info(f"Preset de orientación '{preset_name}' aplicado a macro {macro_id}")
+
+        return True
+
+    def set_modulator_intensity(self, intensity: float, macro_id: Optional[str] = None):
+        """Establecer intensidad del modulador (0-1)"""
+        intensity = np.clip(intensity, 0.0, 1.0)
+        
+        if macro_id:
+            # Aplicar solo a un macro
+            if macro_id in self._macros:
+                macro = self._macros[macro_id]
+                for sid in macro.source_ids:
+                    if sid in self.orientation_modulators:
+                        self.orientation_modulators[sid].intensity = intensity
+        else:
+            # Aplicar globalmente
+            self.global_modulator_intensity = intensity
+            for modulator in self.orientation_modulators.values():
+                modulator.intensity = intensity
+                
+        logger.info(f"Intensidad del modulador establecida a {intensity:.1%}")
+
+    def update(self, dt: float) -> Dict[str, Any]:
+        pass  # TODO: Implementar
+        """
+        Actualizar el sistema completo - VERSIÓN OPTIMIZADA
+        Solo procesa fuentes que están en macros activos
+        """
+        t = self._time
+        
+        # ========== DETERMINAR FUENTES ACTIVAS ==========
+        active_sources = set()
+        for macro in self._macros.values():
+            active_sources.update(macro.source_ids)
+        
+        # Si no hay fuentes activas, no hacer nada
+        if not active_sources:
+            self._time += dt
+            self._frame_count += 1
+            return {
+                'positions': {},
+                'orientations': {},
+                'apertures': {},
+                'names': {},
+                'time': self._time,
+                'frame': self._frame_count
+            }
+        
+        # ========== ACTUALIZAR SOLO FUENTES ACTIVAS ==========
+        for sid in active_sources:
+            if sid not in self._source_motions:
+                continue
+                
+            motion = self._source_motions[sid]
+            pos, orient, aperture = motion.update(t, dt)
+            
+            # Actualizar arrays globales
+            self._positions[sid] = pos
+            self._orientations[sid] = orient
+            self._apertures[sid] = aperture
+        
+        # ========== ACTUALIZAR MODULADORES (solo activos) ==========
+        if self.enable_modulator:
+            current_time = time.time()
+            for sid in active_sources:
+                if sid in self.orientation_modulators:
+                    modulator = self.orientation_modulators[sid]
+                    if modulator.enabled:
+                        # Actualizar estado con modulación
+                        motion = self._source_motions[sid]
+                        motion.state = modulator.update(current_time, dt, motion.state)                        # Actualizar arrays globales con las nuevas orientaciones
+                        self._orientations[sid] = motion.state.orientation
+                        self._apertures[sid] = motion.state.aperture
+        
+        # ========== ENVIAR ACTUALIZACIONES OSC (solo activos) ==========
+        if self.osc_bridge and self._check_rate_limit():
+            for sid in active_sources:
+                # Enviar posición siempre
+                self.osc_bridge.send_position(sid, self._positions[sid])
+                
+                # Enviar orientación y apertura si el modulador está activo
+                if self.enable_modulator and sid in self.orientation_modulators:
+                    modulator = self.orientation_modulators[sid]
+                    if modulator.enabled:
+                        # Verificar cambios en orientación
+                        orientation_changed = False
+                        if sid not in self._last_orientations:
+                            orientation_changed = True
+                        else:
+                            orientation_diff = np.linalg.norm(
+                                self._orientations[sid] - self._last_orientations[sid]
+                            )
+                            if orientation_diff > self._orientation_update_threshold:
+                                orientation_changed = True
+                        
+                        # Verificar cambios en apertura
+                        aperture_changed = False
+                        if sid not in self._last_apertures:
+                            aperture_changed = True
+                        else:
+                            aperture_diff = abs(self._apertures[sid] - self._last_apertures[sid])
+                            if aperture_diff > self._aperture_update_threshold:
+                                aperture_changed = True
+                        
+                        # Enviar orientación si cambió
+                        if orientation_changed:
+                            self.osc_bridge.send_orientation(
+                                sid,
+                                self._orientations[sid][0],  # yaw
+                                self._orientations[sid][1],  # pitch
+                                self._orientations[sid][2]   # roll
+                            )
+                            self._last_orientations[sid] = self._orientations[sid].copy()
+                        
+                        # Enviar apertura si cambió (independientemente de la orientación)
+                        if aperture_changed:
+                            self.osc_bridge.send_aperture(sid, self._apertures[sid])
+                            self._last_apertures[sid] = self._apertures[sid]
+        
+        # Incrementar tiempo
+        self._time += dt
+        self._frame_count += 1
+        
+        # Preparar respuesta solo con fuentes activas
+        active_positions = {sid: self._positions[sid] for sid in active_sources}
+        active_orientations = {sid: self._orientations[sid] for sid in active_sources}
+        active_apertures = {sid: self._apertures[sid] for sid in active_sources}
+        active_names = {sid: self._source_info[sid].name for sid in active_sources if sid in self._source_info}
+        
+        # Preparar datos para OSC
+        osc_data = self._prepare_osc_data()
+        
+        return {
+            'positions': osc_data['positions'],
+            'orientations': osc_data['orientations'],
+            'apertures': osc_data['apertures'],
+            'names': osc_data['names'],
+            'time': self._time,
+            'frame': self._frame_count
+        }
+
+    
+    def _prepare_osc_data(self):
+        """Preparar datos para envío OSC en formato correcto"""
+        active_sources = set()
+        for macro in self._macros.values():
+            active_sources.update(macro.source_ids)
+        
+        # Convertir a arrays numpy para OSC
+        positions_list = []
+        orientations_list = []
+        apertures_list = []
+        names_dict = {}
+        
+        for sid in sorted(active_sources):
+            if sid in self._source_motions:
+                # Posición
+                pos = self._positions[sid]
+                positions_list.append(pos.tolist() if hasattr(pos, 'tolist') else list(pos))
+                
+                # Orientación
+                orient = self._orientations[sid]
+                orientations_list.append(orient.tolist() if hasattr(orient, 'tolist') else list(orient))
+                
+                # Apertura
+                apertures_list.append(float(self._apertures[sid]))
+                
+                # Nombre
+                if sid in self._source_info:
+                    names_dict[sid] = str(self._source_info[sid].name)
+        
+        return {
+            'positions': positions_list,
+            'orientations': orientations_list,
+            'apertures': apertures_list,
+            'names': names_dict,
+            'count': len(positions_list)
+        }
+
+    def step(self) -> Dict[str, Any]:
+        pass  # TODO: Implementar
+        """
+        Método de compatibilidad para InteractiveController
+        Llama a update() y devuelve el estado
+        """
+        return self.update(self.dt)
+
+    def get_debug_info(self, source_id: int) -> Dict[str, Any]:
+        """Obtener información de debug de una fuente"""
+        if source_id not in self._source_motions:
+            return {"error": "Fuente no encontrada"}
+            
+        motion = self._source_motions[source_id]
+        info = {
+            "id": source_id,
+            "position": motion.state.position.tolist(),
+            "orientation": motion.state.orientation.tolist(),
+            "aperture": motion.state.aperture,
+            "components": {}
+        }
+        
+        for name, component in motion.components.items():
+            comp_info = {
+                "enabled": component.enabled,
+                "weight": component.weight
+            }
+            
+            if isinstance(component, IndividualTrajectory):
+                comp_info.update({
+                    "shape": component.shape_type,
+                    "movement_mode": component.movement_mode.value,
+                    "position_on_trajectory": component.position_on_trajectory
+                })
+            elif isinstance(component, TrajectoryTransform):
+                comp_info.update({
+                    "displacement_mode": component.displacement_mode.value,
+                    "offset": component.offset.tolist() if isinstance(component.offset, np.ndarray) else str(component.offset)
+                })
+            elif isinstance(component, OrientationModulation):
+                comp_info.update({
+                    "has_yaw": component.yaw_func is not None,
+                    "has_pitch": component.pitch_func is not None,
+                    "has_roll": component.roll_func is not None
+                })
+                
+            info["components"][name] = comp_info
+            
+        return info
+
+    # ========== MÉTODOS DE COMPATIBILIDAD ==========
+    
+    def set_source_name(self, source_id: int, name: str):
+        """Compatibilidad: establecer nombre de fuente"""
+        if source_id in self._source_info:
+            self._source_info[source_id].name = name
+        else:
+            logger.warning(f"Fuente {source_id} no existe para establecer nombre")
+    
+    def get_source_names(self) -> Dict[int, str]:
+        """Compatibilidad: obtener nombres de fuentes"""
+        return {sid: info.name for sid, info in self._source_info.items() if info.name}
+
+    def get_deformer(self, macro_id: Optional[str] = None) -> CompositeDeformer:
+        pass  # TODO: Implementar
+        """
+        Obtener deformador para un macro o el global
+        
+        Parameters
+        ----------
+        macro_id : str, optional
+        ID del macro. Si None, retorna el deformador global
+            
+        Returns
+        -------
+        CompositeDeformer
+        Deformador solicitado
+        """
+        if macro_id:
+            if macro_id not in self._macro_deformers:
+                self._macro_deformers[macro_id] = CompositeDeformer()
+            return self._macro_deformers[macro_id]
+        return self.global_deformer
+
+    def save_modulator_state(self, macro_name: str) -> Dict[str, Any]:
+        """Guardar estado de los moduladores de un macro"""
+        if macro_name not in self._macros:
+            logger.error(f"Macro '{macro_name}' no encontrado")
+            return {}
+            
+        macro = self._macros[macro_name]
+        state = {}
+        
+        for sid in macro.source_ids:
+            if sid in self.orientation_modulators:
+                state[sid] = self.orientation_modulators[sid].get_state_dict()
+                
+        logger.info(f"Estado de moduladores guardado para macro '{macro_name}'")
+        return state
+
+    def load_modulator_state(self, macro_name: str, state: Dict[str, Any]) -> bool:
+        """Cargar estado de los moduladores de un macro"""
+        if macro_name not in self._macros:
+            logger.error(f"Macro '{macro_name}' no encontrado")
+            return False
+            
+        macro = self._macros[macro_name]
+        
+        for sid, mod_state in state.items():
+            sid = int(sid)  # Asegurar que es int
+            if sid not in macro.source_ids:
+                continue
+                
+            if sid not in self.orientation_modulators:
+                self.create_orientation_modulator(sid)
+                
+            self.orientation_modulators[sid].load_state_dict(mod_state)
+            
+        logger.info(f"Estado de moduladores cargado para macro '{macro_name}'")
+        return True
+
+
+    def get_orientation_presets(self) -> Dict[str, Dict[str, Any]]:
+        pass  # TODO: Implementar
+        """
+        Obtener diccionario de presets de orientación disponibles
+        
+        Returns
+        -------
+        dict
+        Diccionario con información de cada preset
+        """
+        # Importar la clase si no está importada
+        try:
+            from trajectory_hub.core.motion_components import AdvancedOrientationModulation
+        except ImportError:
+            from motion_components import AdvancedOrientationModulation
+        
+        # Crear una instancia temporal para acceder a los presets
+        temp_modulator = AdvancedOrientationModulation()
+        presets = temp_modulator.presets
+        
+        # Formatear para el usuario
+        formatted_presets = {}
+        for name, data in presets.items():
+            formatted_presets[name] = {
+                "description": data["description"],
+                "shape": data["shape"],
+                "lfo": data["lfo"],
+                "aperture": data["aperture"],
+                "aperture_mod": data.get("aperture_mod", 0.0)
+            }
+            
+        return formatted_presets
+
+    def get_modulator_state(self, source_id: int) -> Optional[Dict[str, Any]]:
+        pass  # TODO: Implementar
+        """
+        Obtener estado actual del modulador de una fuente
+        
+        Parameters
+        ----------
+        source_id : int
+        ID de la fuente
+            
+        Returns
+        -------
+        dict or None
+        Estado del modulador o None si no existe
+        """
+        if source_id not in self.orientation_modulators:
+            return None
+            
+        modulator = self.orientation_modulators[source_id]
+        
+        return {
+            "enabled": modulator.enabled,
+            "intensity": modulator.intensity,
+            "modulation_shape": modulator.modulation_shape,
+            "lfo_frequency": modulator.lfo_frequency,
+            "aperture_base": modulator.aperture_base,
+            "aperture_modulation": modulator.aperture_modulation,
+            "time_offset": modulator.time_offset
+        }
+
+    def set_orientation_lfo(self, macro_id: str, frequency: float) -> bool:
+        pass  # TODO: Implementar
+        """
+        Establecer frecuencia LFO del modulador
+        
+        Parameters
+        ----------
+        macro_id : str
+        ID del macro
+        frequency : float
+        Frecuencia en Hz (0.1-10)
+            
+        Returns
+        bool
+        True si se aplicó correctamente
+        """
+        if macro_id not in self._macros:
+            logger.error(f"Macro {macro_id} no encontrado")
+            return False
+            
+        macro = self._macros[macro_id]
+        frequency = np.clip(frequency, 0.1, 10.0)
+        
+        for sid in macro.source_ids:
+            if sid in self.orientation_modulators:
+                self.orientation_modulators[sid].lfo_frequency = frequency
+                
+        logger.info(f"LFO establecido a {frequency} Hz para macro {macro_id}")
+        return True
+
+    def set_orientation_intensity(self, macro_id: str, intensity: float) -> bool:
+        pass  # TODO: Implementar
+        """
+        Establecer intensidad del modulador
+        
+        Parameters
+        ----------
+        macro_id : str
+        ID del macro
+        intensity : float
+        Intensidad (0.0-1.0)
+            
+        Returns
+        bool
+        True si se aplicó correctamente
+        """
+        if macro_id not in self._macros:
+            logger.error(f"Macro {macro_id} no encontrado")
+            return False
+            
+        macro = self._macros[macro_id]
+        intensity = np.clip(intensity, 0.0, 1.0)
+        
+        for sid in macro.source_ids:
+            if sid in self.orientation_modulators:
+                self.orientation_modulators[sid].intensity = intensity
+                
+        logger.info(f"Intensidad establecida a {intensity:.1%} para macro {macro_id}")
+        return True
+
+    def interpolate_orientation_presets(self, macro_id: str, preset1: str, preset2: str, factor: float) -> bool:
+        pass  # TODO: Implementar
+        """
+        Interpolar entre dos presets de orientación
+        
+        Parameters
+        ----------
+        macro_id : str
+        ID del macro
+        preset1 : str
+        Nombre del primer preset
+        preset2 : str
+        Nombre del segundo preset
+        factor : float
+        Factor de interpolación (0.0 = preset1, 1.0 = preset2)
+            
+        bool
+        True si se aplicó correctamente
+        """
+        if macro_id not in self._macros:
+            logger.error(f"Macro {macro_id} no encontrado")
+            return False
+            
+        macro = self._macros[macro_id]
+        factor = np.clip(factor, 0.0, 1.0)
+        
+        for sid in macro.source_ids:
+            if sid in self.orientation_modulators:
+                self.orientation_modulators[sid].interpolate_presets(preset1, preset2, factor)
+                
+        logger.info(f"Interpolación {factor:.1%} entre '{preset1}' y '{preset2}'")
+        return True
+
+    def set_orientation_shape(self, macro_id: str, shape: str, scale: Optional[List[float]] = None) -> bool:
+        pass  # TODO: Implementar
+        """
+        Configurar forma de modulación manualmente
+        
+        Parameters
+        ----------
+        macro_id : str
+        ID del macro
+        shape : str
+        Tipo de forma (circle, ellipse, lissajous, etc.)
+        scale : list of float, optional
+        Escala en cada eje [yaw, pitch, roll]
+            
+        bool
+        True si se aplicó correctamente
+        """
+        if macro_id not in self._macros:
+            logger.error(f"Macro {macro_id} no encontrado")
+            return False
+            
+        macro = self._macros[macro_id]
+        
+        for sid in macro.source_ids:
+            if sid in self.orientation_modulators:
+                modulator = self.orientation_modulators[sid]
+                modulator.modulation_shape = shape
+                if scale:
+                    modulator.shape_scale = np.array(scale)
+                    
+        logger.info(f"Forma '{shape}' configurada para macro {macro_id}")
+        return True
+
+    def toggle_orientation_modulation(self, macro_id: str, enabled: bool) -> bool:
+        pass  # TODO: Implementar
+        """
+        Activar/desactivar modulación de orientación
+        
+        Parameters
+        ----------
+        macro_id : str
+        ID del macro
+        enabled : bool
+        True para activar, False para desactivar
+            
+        Returns
+        bool
+        True si se aplicó correctamente
+        """
+        if macro_id not in self._macros:
+            logger.error(f"Macro {macro_id} no encontrado")
+            return False
+            
+        macro = self._macros[macro_id]
+        
+        for sid in macro.source_ids:
+            if sid in self.orientation_modulators:
+                self.orientation_modulators[sid].enabled = enabled
+                
+        state = "activada" if enabled else "desactivada"
+        logger.info(f"Modulación {state} para macro {macro_id}")
+        return True
+    def _send_osc_update(self):
+        """Enviar actualización OSC incluyendo orientaciones"""
+        if not hasattr(self, 'osc_bridge') or not self.osc_bridge:
+            return
+            
+        positions = []
+        orientations = []
+        apertures = []
+        names = {}
+        
+        # Recopilar datos de todas las fuentes activas
+        active_sources = sorted(self._source_motions.keys())
+        
+        for sid in active_sources:
+            # Posiciones
+            positions.append(self._positions[sid])
+            
+            # Orientaciones y aperturas
+            if self.enable_modulator and sid in self.orientation_modulators:
+                orientations.append(self._orientations[sid])
+                apertures.append(self._apertures[sid])
+            else:
+                orientations.append([0.0, 0.0, 0.0])
+                apertures.append(0.5)
+                
+            # Nombres
+            if sid in self._source_info and self._source_info[sid].name:
+                names[sid] = self._source_info[sid].name
+        
+        # Enviar todo
+        if positions:
+            self.osc_bridge.send_full_state(
+                positions=np.array(positions),
+                orientations=np.array(orientations),
+                apertures=np.array(apertures),
+                names=names
+            )
+
+    def _check_rate_limit(self) -> bool:
+        """Verificar si se debe enviar actualización OSC (para limitar tasa)"""
+        # Simple implementación: siempre enviar
+        # Puedes implementar un limitador más sofisticado si es necesario
+        return True
+
+    def _get_macro_source_ids(self, macro: EnhancedMacroSource) -> List[int]:
+        """Obtener IDs de fuentes de un macro (helper para compatibilidad)"""
+        return list(macro.source_ids)
+
+    def stop(self):
+        """Detener el motor"""
+        self._is_running = False
+        logger.info("Motor detenido")
+
+    def __del__(self):
+        """Limpieza al destruir"""
+        self.stop()        

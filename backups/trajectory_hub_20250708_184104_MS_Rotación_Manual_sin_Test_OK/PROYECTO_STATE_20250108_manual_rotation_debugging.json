@@ -1,0 +1,142 @@
+{
+  "session_id": "20250108_manual_rotation_debugging",
+  "timestamp": "2025-07-08T16:29:52.561078",
+  "project": "trajectory_hub",
+  "phase": "manual_rotation_ms_implementation",
+  "status": "ManualMacroRotation implementada pero sin movimiento",
+  "trabajo_realizado": {
+    "objetivo_sesion": "Completar rotaciones manuales MS con sistema de deltas",
+    "tiempo_total": "~2 horas",
+    "intentos_realizados": [
+      {
+        "intento": 1,
+        "descripcion": "fix_manual_rotation_state.py",
+        "resultado": "Rotación funciona pero no es perfecta (error 8.432)",
+        "problema": "La rotación no llega a 180° completos"
+      },
+      {
+        "intento": 2,
+        "descripcion": "fix_manual_rotation_precision.py",
+        "resultado": "Aparecen valores Z incorrectos, fuentes no rotan correctamente",
+        "problema": "Matriz de rotación incorrecta, algunas fuentes no se mueven"
+      },
+      {
+        "intento": 3,
+        "descripcion": "fix_rotation_matrix.py",
+        "resultado": "Las fuentes NO rotan, permanecen en posición original",
+        "problema": "Posiciones no cambian en XY, aparecen valores Z pequeños"
+      },
+      {
+        "intento": 4,
+        "descripcion": "fix_rotation_complete.py",
+        "resultado": "Sistema dice funcional pero fuentes no se mueven",
+        "problema": "Los deltas no se están aplicando a las posiciones"
+      }
+    ],
+    "diagnosticos_ejecutados": [
+      "diagnose_rotation_issue.py - Identificó problemas de sincronización",
+      "debug_no_movement.py - Error con _active_sources",
+      "debug_no_movement_fixed.py - Error con create_source API",
+      "debug_rotation_final.py - Pendiente de ejecutar"
+    ],
+    "archivos_modificados": [
+      "motion_components.py - ManualMacroRotation con calculate_delta",
+      "enhanced_trajectory_engine.py - Sincronización de states añadida",
+      "Múltiples backups creados durante debugging"
+    ]
+  },
+  "estado_actual": {
+    "sistema_deltas": {
+      "arquitectura": "✅ 100% implementada",
+      "concentration": "✅ 100% funcional",
+      "individual_trajectory": "✅ 100% funcional",
+      "macro_trajectory": "✅ 100% funcional",
+      "macro_rotation": "✅ 95% funcional (pequeño issue)",
+      "manual_macro_rotation": "❌ 50% - Implementada pero no mueve fuentes"
+    },
+    "problema_principal": {
+      "descripcion": "ManualMacroRotation no mueve las fuentes",
+      "sintomas": [
+        "calculate_delta funciona y retorna valores correctos",
+        "Las posiciones no cambian después de engine.update()",
+        "States no se sincronizan correctamente",
+        "Posible problema en cómo engine.update() aplica deltas"
+      ],
+      "ultimo_error": "create_source() retorna SourceMotion, no un ID"
+    },
+    "scripts_debug_creados": [
+      "fix_manual_rotation_state.py",
+      "fix_manual_rotation_precision.py",
+      "fix_rotation_matrix.py",
+      "fix_rotation_complete.py",
+      "diagnose_rotation_issue.py",
+      "debug_no_movement.py",
+      "debug_no_movement_fixed.py",
+      "debug_rotation_final.py",
+      "test_manual_rotation_final.py",
+      "test_rotation_precision.py",
+      "test_yaw_rotation.py",
+      "test_rotation_fixed.py"
+    ]
+  },
+  "pendiente_inmediato": [
+    "1. Ejecutar debug_rotation_final.py",
+    "2. Identificar por qué engine.update() no aplica deltas",
+    "3. Verificar el flujo completo de motion.update()",
+    "4. Corregir aplicación de deltas en engine",
+    "5. Test final de rotaciones manuales"
+  ],
+  "pendiente_proxima_sesion": [
+    "1. Completar ManualMacroRotation (si no se resuelve)",
+    "2. Implementar ManualIndividualRotation con deltas",
+    "3. Implementar IndividualRotation algorítmica con deltas",
+    "4. CRÍTICO: Comenzar servidor MCP (0% - objetivo principal)",
+    "5. Integrar modulador 3D del documento PDF"
+  ],
+  "contexto_critico": {
+    "problema_recurrente": "Los deltas se calculan correctamente pero no se aplican",
+    "posible_causa": "engine.update() puede no estar procesando motion.update() correctamente",
+    "api_correcta": {
+      "create_macro": "Crea fuentes automáticamente",
+      "source_ids": "Obtenidos del macro.source_ids",
+      "set_manual_macro_rotation": "Configura rotación para todo el macro"
+    },
+    "sistema_deltas": "Arquitectura completa pero con issues de integración"
+  },
+  "metricas_proyecto": {
+    "sistema_deltas": "85% completo (5.5/7 componentes funcionales)",
+    "rotaciones": "25% completo (1/4 tipos implementados)",
+    "servidor_mcp": "0% - NO INICIADO - CRÍTICO",
+    "modulador_3d": "0% - Documentación disponible pero no integrado",
+    "proyecto_total": "~60% completo (sin MCP), ~40% (con MCP como objetivo)"
+  },
+  "comando_pendiente": "python debug_rotation_final.py",
+  "notas_importantes": {
+    "logros_confirmados": [
+      "Sistema de deltas funcional para 4 componentes",
+      "Trayectorias individuales funcionan perfectamente",
+      "Concentración/dispersión funciona",
+      "Trayectorias macro funcionan"
+    ],
+    "bloqueadores_actuales": [
+      "ManualMacroRotation implementada pero no funcional",
+      "Posible issue en engine.update()",
+      "Sincronización de states problemática"
+    ],
+    "decision_usuario": "Completar TODOS los movimientos antes de pasar a MCP"
+  },
+  "recursos_disponibles": {
+    "documentos_pdf": [
+      "Guía de integración del modulador 3D",
+      "Guía del modulador 3D - Trajectory Hub",
+      "Trayectorias Macro Source.pdf",
+      "Análisis del problema (trayectorias individuales)",
+      "TO-DO list completa del proyecto"
+    ],
+    "archivos_proyecto": [
+      "motion_components.py - Componentes de movimiento",
+      "enhanced_trajectory_engine.py - Motor principal",
+      "monitoring-system.py - Sistema de monitoreo"
+    ]
+  }
+}

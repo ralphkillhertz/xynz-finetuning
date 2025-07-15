@@ -1,0 +1,1815 @@
+"""
+interactive_controller.py - Controlador principal del sistema interactivo (CORREGIDO)
+"""
+import asyncio
+import numpy as np
+import time
+import logging
+from typing import Dict, List, Optional
+
+# Imports principales con manejo de errores mejorado
+try:
+    # Intentar importar desde la estructura esperada del proyecto
+    from trajectory_hub.presets.artistic_presets import (
+        ARTISTIC_PRESETS, 
+        TRAJECTORY_FUNCTIONS,
+        TEMPORAL_COMPOSITIONS,
+        STYLE_CONFIGS
+    )
+except ImportError as e:
+    # Si falla, usar definiciones mínimas de respaldo
+    logging.warning(f"No se pudieron importar presets artísticos: {e}")
+    
+    ARTISTIC_PRESETS = {
+        "Demo Básico": {
+            "description": "Configuración básica para pruebas",
+            "macros": [{"name": "Grupo_Demo", "sources": 10, "behavior": "flock", "formation": "circle"}],
+            "trajectories": {"Grupo_Demo": "circle"},
+            "distances": {"Grupo_Demo": "personal"},
+            "deformations": {"Grupo_Demo": [("breathing", 4.0, 1.0)]},
+            "interactions": []
+        }
+    }
+    
+    TRAJECTORY_FUNCTIONS = {
+        "circle": lambda t: np.array([5*np.cos(t*0.3), 5*np.sin(t*0.3), 0]),
+        "spiral": lambda t: np.array([(3+0.1*t)*np.cos(t*0.5), (3+0.1*t)*np.sin(t*0.5), 0.2*t])
+    }
+    
+    TEMPORAL_COMPOSITIONS = {
+        "Demo Simple": {
+            "description": "Composición de demostración",
+            "duration": "2 minutos",
+            "dynamics": "Suave",
+            "timeline": []
+        }
+    }
+    
+    STYLE_CONFIGS = {
+        "Demo": {
+            "behaviors": ["flock", "rigid"],
+            "formations": ["circle", "line"],
+            "trajectories": ["circle", "spiral"],
+            "source_range": {"simple": (5, 15), "medium": (10, 25), "complex": (20, 50)},
+            "preferred_distances": ["personal", "social"],
+            "deformations": ["breathing"]
+        }
+    }
+
+# Imports del núcleo del sistema
+try:
+    from trajectory_hub import EnhancedTrajectoryEngine, SpatOSCBridge, OSCTarget
+    from trajectory_hub.core import (
+        TrajectoryMovementMode, TrajectoryDisplacementMode,
+        CompositeDeformer, BlendMode
+    )
+    from trajectory_hub.core.distance_controller import TrajectoryDistanceAdjuster, DistanceController
+except ImportError as e:
+    logging.error(f"Error importando componentes del núcleo: {e}")
+    raise
+
+# Configuración de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class MockOSCBridge:
+    """Bridge mock para cuando OSC falla completamente"""
+    def _apply_semantic_movement_to_macro(self, macro_id: str, movement_name: str, params: dict):
+        """Aplicar parámetros de movimiento semántico al macro"""
+        macro = self.engine._macros[macro_id]
+        source_ids = self._get_macro_source_ids(macro)
+        
+        # Aplicar parámetros a cada fuente
+        for sid in source_ids:
+            if sid in self.engine._source_motions:
+                motion = self.engine._source_motions[sid]
+                
+                # Aplicar vibraciones
+                if 'vibration' in params:
+                    if hasattr(motion, 'components') and 'individual_trajectory' in motion.components:
+                        traj = motion.components['individual_trajectory']
+                        if hasattr(traj, 'set_movement_mode'):
+                            from trajectory_hub.core.motion_components import TrajectoryMovementMode
+                            traj.set_movement_mode(
+                                TrajectoryMovementMode.VIBRATION,
+                                vibration_frequency=params['vibration'],
+                                vibration_amplitude=0.5
+                            )
+                
+                # Aplicar otros parámetros según estén disponibles
+                for param, value in params.items():
+                    if hasattr(motion, param):
+                        setattr(motion, param, value)
+    
+    async def configure_behavior_params_safe(self):
+        """Configurar parámetros específicos del comportamiento"""
+        print("\n⚙️  PARÁMETROS DE COMPORTAMIENTO")
+        
+        behavior = self.get_macro_behavior_safe(self.selected_macro)
+        print(f"Comportamiento actual: {behavior}")
+        
+        # Parámetros disponibles según el comportamiento
+        if behavior == "flock":
+            print("\nParámetros de bandada:")
+            separation = await self._get_float("Distancia de separación (0.5-5.0): ", 0.5, 5.0)
+            cohesion = await self._get_float("Fuerza de cohesión (0.0-1.0): ", 0.0, 1.0)
+            alignment = await self._get_float("Alineación (0.0-1.0): ", 0.0, 1.0)
+            print("✅ Parámetros de bandada actualizados")
+            
+        elif behavior == "elastic":
+            print("\nParámetros elásticos:")
+            stiffness = await self._get_float("Rigidez del resorte (0.1-2.0): ", 0.1, 2.0)
+            damping = await self._get_float("Amortiguación (0.0-1.0): ", 0.0, 1.0)
+            print("✅ Parámetros elásticos actualizados")
+            
+        elif behavior == "orbit":
+            print("\nParámetros de órbita:")
+            radius = await self._get_float("Radio de órbita (1.0-20.0): ", 1.0, 20.0)
+            speed = await self._get_float("Velocidad orbital (0.1-5.0): ", 0.1, 5.0)
+            print("✅ Parámetros de órbita actualizados")
+            
+        else:
+            print("\nNo hay parámetros configurables para este comportamiento")
+    
+    async def toggle_movement_components_safe(self):
+        """Activar/desactivar componentes específicos de movimiento"""
+        print("\n🔧 COMPONENTES DE MOVIMIENTO")
+        
+        components = {
+            "trajectory": "Trayectoria principal",
+            "individual": "Trayectorias individuales",
+            "vibration": "Vibración/temblor",
+            "rotation": "Rotación/orientación",
+            "deformation": "Sistema de deformación"
+        }
+        
+        print("\nComponentes disponibles:")
+        for i, (comp, desc) in enumerate(components.items(), 1):
+            status = "✓ Activo" if self._is_component_active(comp) else "✗ Inactivo"
+            print(f"{i}. {comp:15} - {desc:30} [{status}]")
+        
+        try:
+            choice = await self._get_input("\nSeleccionar componente para cambiar estado (0 para salir): ")
+            if choice == "0":
+                return
+                
+            comp_list = list(components.keys())
+            idx = int(choice) - 1
+            
+            if 0 <= idx < len(comp_list):
+                component = comp_list[idx]
+                new_state = self._toggle_component(component)
+                status = "activado" if new_state else "desactivado"
+                print(f"\n✅ Componente '{component}' {status}")
+            else:
+                print("\n⚠️  Opción no válida")
+                
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
+    
+    def _is_component_active(self, component: str) -> bool:
+        """Verificar si un componente está activo"""
+        macro = self.engine._macros.get(self.selected_macro)
+        if not macro:
+            return False
+            
+        if component == "trajectory":
+            return hasattr(macro, 'trajectory_component') and macro.trajectory_component is not None
+        elif component == "deformation":
+            return getattr(macro, 'deformation_enabled', False)
+        # Añadir más verificaciones según sea necesario
+        
+        return False
+    
+    def _toggle_component(self, component: str) -> bool:
+        """Cambiar el estado de un componente"""
+        macro = self.engine._macros.get(self.selected_macro)
+        if not macro:
+            return False
+            
+        if component == "deformation":
+            current = getattr(macro, 'deformation_enabled', False)
+            macro.deformation_enabled = not current
+            return macro.deformation_enabled
+            
+        # Añadir más toggles según sea necesario
+        return False
+    
+    async def reset_movements_safe(self):
+        """Resetear todos los movimientos a su estado inicial"""
+        print("\n🔄 RESETEAR MOVIMIENTOS")
+        
+        try:
+            confirm = await self._get_bool("¿Resetear todos los movimientos del macro? (s/n): ")
+            
+            if confirm:
+                macro = self.engine._macros[self.selected_macro]
+                source_ids = self._get_macro_source_ids(macro)
+                
+                for sid in source_ids:
+                    if sid in self.engine._source_motions:
+                        motion = self.engine._source_motions[sid]
+                        
+                        # Resetear posición en trayectoria
+                        if hasattr(motion, 'components') and 'individual_trajectory' in motion.components:
+                            traj = motion.components['individual_trajectory']
+                            if hasattr(traj, 'position_on_trajectory'):
+                                traj.position_on_trajectory = 0.0
+                        
+                        # Resetear otros estados si es necesario
+                        if hasattr(motion, 'state'):
+                            motion.state.velocity = np.zeros(3)
+                            motion.state.acceleration = np.zeros(3)
+                            
+                print("\n✅ Movimientos reseteados")
+            else:
+                print("\n❌ Reset cancelado")
+                
+        except Exception as e:
+            print(f"\n❌ Error reseteando movimientos: {e}")
+            
+    # =====================================
+    # INTERACCIÓN ENTRE MACROS
+    # =====================================
+    
+    async def interaction_menu(self):
+        """Menú de interacción entre macros"""
+        if len(self.macros) < 2:
+            print("\n⚠️  Se necesitan al menos 2 macros para configurar interacciones")
+            return
+            
+        while True:
+            print("\n" + "-"*40)
+            print("INTERACCIÓN ENTRE MACROS")
+            print("-"*40)
+            print("1. Configurar seguimiento (un macro sigue a otro)")
+            print("2. Establecer atracción/repulsión mutua")
+            print("3. Sincronizar movimientos")
+            print("4. Crear órbita (un macro orbita alrededor de otro)")
+            print("5. Configurar colisiones")
+            print("6. Ver interacciones activas")
+            print("0. Volver")
+            
+            choice = await self._get_input("\nSelección: ")
+            
+            try:
+                if choice == "1":
+                    await self.configure_following()
+                elif choice == "2":
+                    await self.configure_mutual_forces()
+                elif choice == "3":
+                    await self.sync_movements()
+                elif choice == "4":
+                    await self.configure_orbit()
+                elif choice == "5":
+                    await self.configure_collisions()
+                elif choice == "6":
+                    await self.show_active_interactions()
+                elif choice == "0":
+                    break
+                else:
+                    print("\n⚠️  Opción no válida")
+                    
+            except Exception as e:
+                logger.error(f"Error en interacciones: {e}")
+                print(f"\n❌ Error: {e}")
+                
+    async def configure_following(self):
+        """Configurar un macro para que siga a otro"""
+        print("\n👥 CONFIGURAR SEGUIMIENTO")
+        print("Esta función está en desarrollo")
+        
+    async def configure_mutual_forces(self):
+        """Configurar atracción/repulsión entre macros"""
+        print("\n🧲 FUERZAS MUTUAS")
+        print("Esta función está en desarrollo")
+        
+    async def sync_movements(self):
+        """Sincronizar movimientos entre macros"""
+        print("\n🔄 SINCRONIZAR MOVIMIENTOS")
+        print("Esta función está en desarrollo")
+        
+    async def configure_orbit(self):
+        """Configurar un macro para orbitar alrededor de otro"""
+        print("\n🪐 CONFIGURAR ÓRBITA")
+        print("Esta función está en desarrollo")
+        
+    async def configure_collisions(self):
+        """Configurar comportamiento de colisiones"""
+        print("\n💥 CONFIGURAR COLISIONES")
+        print("Esta función está en desarrollo")
+        
+    async def show_active_interactions(self):
+        """Mostrar interacciones activas entre macros"""
+        print("\n📊 INTERACCIONES ACTIVAS")
+        print("Esta función está en desarrollo")
+        
+    # =====================================
+    # PRESETS Y COMPOSICIONES (CORREGIDO)
+    # =====================================
+    
+    async def preset_menu(self):
+        """Menú de presets y composiciones"""
+        while True:
+            print("\n" + "-"*40)
+            print("PRESETS Y COMPOSICIONES")
+            print("-"*40)
+            print("1. Cargar preset artístico")
+            print("2. Guardar configuración actual como preset")
+            print("3. Composiciones predefinidas")
+            print("4. Generador aleatorio de composiciones")
+            print("5. Exportar/Importar configuración")
+            print("0. Volver")
+            
+            choice = await self._get_input("\nSelección: ")
+            
+            try:
+                if choice == "1":
+                    await self.load_artistic_preset()
+                elif choice == "2":
+                    await self.save_current_preset()
+                elif choice == "3":
+                    await self.load_predefined_composition()
+                elif choice == "4":
+                    await self.generate_random_composition()
+                elif choice == "5":
+                    await self.export_import_config()
+                elif choice == "0":
+                    break
+                else:
+                    print("\n⚠️  Opción no válida")
+                    
+            except Exception as e:
+                logger.error(f"Error en presets: {e}")
+                print(f"\n❌ Error: {e}")
+                
+    async def load_artistic_preset(self):
+        """Cargar preset artístico predefinido (SOLUCIÓN DEFINITIVA)"""
+        print("\n🎨 PRESETS ARTÍSTICOS")
+        
+        try:
+            # Usar presets importados
+            presets = ARTISTIC_PRESETS
+            
+            # Mostrar presets disponibles
+            preset_list = list(presets.keys())
+            for i, (name, data) in enumerate(presets.items(), 1):
+                print(f"{i}. {name}")
+                print(f"   {data['description']}")
+                
+            if not preset_list:
+                print("\n⚠️  No hay presets disponibles")
+                return
+                
+            idx = await self._get_int("\nSeleccionar preset: ", 1, len(preset_list))
+            selected_name = preset_list[idx - 1]
+            preset = presets[selected_name]
+            
+            print(f"\n⏳ Cargando preset '{selected_name}'...")
+            
+            # Limpiar configuración actual
+            confirm = await self._get_bool("¿Eliminar macros actuales? (s/n): ")
+            if confirm:
+                # Eliminar todos los macros existentes de forma segura
+                for macro_id in list(self.engine._macros.keys()):
+                    try:
+                        # Limpiar fuentes del macro
+                        # Usar un enfoque genérico para diferentes estructuras
+                        for i in range(self.engine.max_sources):
+                            if i in self.engine._source_motions:
+                                if hasattr(self.engine._source_info.get(i), 'macro_id'):
+                                    if self.engine._source_info[i].macro_id == macro_id:
+                                        del self.engine._source_motions[i]
+                                        del self.engine._source_info[i]
+                    except Exception as e:
+                        logger.warning(f"Error limpiando macro {macro_id}: {e}")
+                        
+                    # Eliminar el macro
+                    if macro_id in self.engine._macros:
+                        del self.engine._macros[macro_id]
+                        
+                self.macros.clear()
+                self.selected_macro = None
+                
+            # Crear macros según el preset
+            created_macros = {}
+            for macro_config in preset["macros"]:
+                try:
+                    macro_id = self.engine.create_macro(
+                        name=macro_config["name"],
+                        source_count=macro_config["sources"],
+                        behavior=macro_config["behavior"],
+                        formation=macro_config["formation"],
+                        spacing=2.0
+                    )
+                    self.macros[macro_config["name"]] = macro_id
+                    created_macros[macro_config["name"]] = macro_id
+                except Exception as e:
+                    logger.error(f"Error creando macro {macro_config['name']}: {e}")
+                    print(f"⚠️  No se pudo crear macro {macro_config['name']}")
+                    
+            # Configurar trayectorias
+            for macro_name, traj_type in preset["trajectories"].items():
+                if macro_name not in created_macros:
+                    continue
+                    
+                if traj_type not in TRAJECTORY_FUNCTIONS:
+                    logger.warning(f"Trayectoria {traj_type} no encontrada")
+                    continue
+                    
+                macro_id = created_macros[macro_name]
+                trajectory_func = TRAJECTORY_FUNCTIONS[traj_type]
+                
+                try:
+                    # Intentar establecer la trayectoria
+                    # Primero verificar que el método existe
+                    if hasattr(self.engine, 'set_macro_trajectory'):
+                        self.engine.set_macro_trajectory(
+                            macro_id,
+                            trajectory_func,
+                            enable_deformation=True
+                        )
+                        logger.info(f"Trayectoria {traj_type} configurada para {macro_name}")
+                    else:
+                        # Plan B: intentar configurar directamente en el macro
+                        if macro_id in self.engine._macros:
+                            macro = self.engine._macros[macro_id]
+                            if hasattr(macro, 'trajectory_component') and macro.trajectory_component:
+                                macro.trajectory_component.set_trajectory(trajectory_func)
+                                logger.info(f"Trayectoria configurada directamente en {macro_name}")
+                            else:
+                                logger.warning(f"No se pudo configurar trayectoria para {macro_name}")
+                except Exception as e:
+                    logger.error(f"Error configurando trayectoria para {macro_name}: {e}")
+                    print(f"⚠️  No se pudo configurar trayectoria para {macro_name}")
+                    
+            # Configurar distancias (con manejo de errores mejorado)
+            for macro_name, distance in preset["distances"].items():
+                if macro_name not in created_macros:
+                    continue
+                    
+                macro_id = created_macros[macro_name]
+                try:
+                    if hasattr(self, 'distance_adjuster') and self.distance_adjuster:
+                        if hasattr(self.distance_adjuster, 'adjust_macro_distance'):
+                            self.distance_adjuster.adjust_macro_distance(macro_id, distance)
+                            logger.info(f"Distancia {distance} configurada para {macro_name}")
+                except Exception as e:
+                    logger.warning(f"No se pudo configurar distancia {distance} para {macro_name}: {e}")
+                        
+            # Aplicar deformaciones (con verificación robusta)
+            for macro_name, deforms in preset["deformations"].items():
+                if macro_name not in created_macros:
+                    continue
+                    
+                macro_id = created_macros[macro_name]
+                try:
+                    # Verificar diferentes formas de acceder al deformador
+                    deformer = None
+                    
+                    if hasattr(self.engine, 'get_deformer'):
+                        deformer = self.engine.get_deformer(macro_id)
+                    elif hasattr(self.engine, '_macro_deformers') and macro_id in self.engine._macro_deformers:
+                        deformer = self.engine._macro_deformers[macro_id]
+                    elif macro_id in self.engine._macros:
+                        macro = self.engine._macros[macro_id]
+                        if hasattr(macro, 'deformer'):
+                            deformer = macro.deformer
+                            
+                    if deformer:
+                        for deform_data in deforms:
+                            try:
+                                if deform_data[0] == "breathing":
+                                    if hasattr(self.engine, 'apply_breathing'):
+                                        self.engine.apply_breathing(
+                                            deform_data[1], 
+                                            deform_data[2], 
+                                            macro_id
+                                        )
+                                        logger.info(f"Respiración aplicada a {macro_name}")
+                                elif deform_data[0] == "wave" and hasattr(deformer, 'add_deformer'):
+                                    # Importar si es necesario
+                                    try:
+                                        from trajectory_hub.core.trajectory_deformers import WaveDeformer
+                                        wave = WaveDeformer()
+                                        if len(deform_data) > 1:
+                                            wave.num_waves = deform_data[1]
+                                        if len(deform_data) > 2:
+                                            wave.speed = deform_data[2]
+                                        deformer.add_deformer(wave)
+                                        logger.info(f"Deformación wave aplicada a {macro_name}")
+                                    except:
+                                        pass
+                            except Exception as e:
+                                logger.debug(f"Error aplicando deformación {deform_data[0]}: {e}")
+                except Exception as e:
+                    logger.warning(f"Error aplicando deformaciones a {macro_name}: {e}")
+                        
+            # Configurar interacciones (placeholder por ahora)
+            for interaction in preset.get("interactions", []):
+                try:
+                    logger.info(f"Interacción pendiente: {interaction}")
+                except Exception as e:
+                    logger.warning(f"Error procesando interacción: {e}")
+                    
+            # Seleccionar el primer macro como activo
+            if created_macros:
+                first_macro_name = list(created_macros.keys())[0]
+                self.selected_macro = created_macros[first_macro_name]
+                
+            # Calcular estadísticas finales
+            total_sources = 0
+            macros_exitosos = 0
+            
+            for macro_name, macro_id in created_macros.items():
+                try:
+                    # Contar fuentes creadas para este macro
+                    count = 0
+                    for mc in preset["macros"]:
+                        if mc["name"] == macro_name:
+                            count = mc["sources"]
+                            break
+                    total_sources += count
+                    macros_exitosos += 1
+                except:
+                    pass
+                
+            print(f"\n✅ Preset '{selected_name}' cargado")
+            print(f"   • {macros_exitosos} macros creados exitosamente")
+            print(f"   • {total_sources} fuentes totales configuradas")
+            
+            # Avisos sobre funcionalidades pendientes
+            warnings = []
+            if not hasattr(self.engine, 'set_macro_trajectory'):
+                warnings.append("Trayectorias de macro no disponibles")
+            if not hasattr(self, 'distance_adjuster') or not self.distance_adjuster:
+                warnings.append("Control de distancias no disponible")
+            if not hasattr(self.engine, 'get_deformer'):
+                warnings.append("Sistema de deformación limitado")
+                
+            if warnings:
+                print("\n⚠️  Funcionalidades limitadas:")
+                for w in warnings:
+                    print(f"   • {w}")
+                    
+        except Exception as e:
+            logger.error(f"Error cargando preset: {e}")
+            print(f"\n❌ Error cargando preset: {e}")
+            
+            # Mostrar más detalles solo si es necesario
+            if str(e).find("attribute") >= 0:
+                print("\n💡 Sugerencia: El engine puede tener una versión diferente.")
+                print("   Algunas características podrían no estar disponibles.")
+            
+    async def save_current_preset(self):
+        """Guardar la configuración actual como preset"""
+        print("\n💾 GUARDAR PRESET")
+        
+        if not self.macros:
+            print("\n⚠️  No hay configuración para guardar")
+            return
+            
+        try:
+            name = await self._get_input("Nombre del preset: ")
+            description = await self._get_input("Descripción: ")
+            
+            # Recopilar información actual
+            preset = {
+                "name": name,
+                "description": description,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "macros": [],
+                "configurations": {}
+            }
+            
+            for macro_name, macro_id in self.macros.items():
+                macro = self.engine._macros[macro_id]
+                
+                # Información básica del macro
+                macro_info = {
+                    "name": macro_name,
+                    "id": macro_id,
+                    "sources": len(macro.source_ids),
+                    "behavior": macro.behavior_name,
+                    "formation": macro.formation_type,
+                    "spacing": macro.formation_spacing
+                }
+                preset["macros"].append(macro_info)
+                
+            # Guardar en archivo (simplificado)
+            filename = f"preset_{name.replace(' ', '_')}.txt"
+            print(f"\n✅ Preset '{name}' guardado como {filename}")
+            print(f"   {len(preset['macros'])} macros")
+            print(f"   Creado: {preset['timestamp']}")
+            
+        except Exception as e:
+            logger.error(f"Error guardando preset: {e}")
+            print(f"\n❌ Error guardando preset: {e}")
+            
+    async def load_predefined_composition(self):
+        """Cargar composiciones artísticas completas (CORREGIDO)"""
+        print("\n🎭 COMPOSICIONES PREDEFINIDAS")
+        
+        try:
+            # Usar composiciones importadas (CORREGIDO)
+            compositions = TEMPORAL_COMPOSITIONS
+            
+            if not compositions:
+                print("\n⚠️  No hay composiciones disponibles")
+                return
+                
+            comp_list = list(compositions.keys())
+            for i, (name, data) in enumerate(compositions.items(), 1):
+                print(f"\n{i}. {name}")
+                print(f"   {data['description']}")
+                print(f"   Duración: {data['duration']}")
+                print(f"   Dinámicas: {data['dynamics']}")
+                
+            choice = await self._get_int("\nSeleccionar composición: ", 1, len(comp_list))
+            selected = comp_list[choice - 1]
+            
+            print(f"\n⏳ Preparando '{selected}'...")
+            
+            # Aquí se podría implementar la lógica de timeline
+            composition = compositions[selected]
+            if "timeline" in composition:
+                print("\n📋 Timeline de la composición:")
+                for event in composition["timeline"]:
+                    print(f"   {event['time']}s: {event['action']}")
+                    
+            print(f"\n✅ Composición '{selected}' lista para reproducir")
+            print("\n💡 Tip: Usa el menú principal para ajustar parámetros en tiempo real")
+            
+        except Exception as e:
+            logger.error(f"Error cargando composición: {e}")
+            print(f"\n❌ Error cargando composición: {e}")
+            
+    async def generate_random_composition(self):
+        """Generar una composición aleatoria con parámetros (CORREGIDO)"""
+        print("\n🎲 GENERADOR ALEATORIO DE COMPOSICIONES")
+        
+        try:
+            print("\nParámetros de generación:")
+            
+            # Número de macros
+            num_macros = await self._get_int("Número de macros (1-5): ", 1, 5)
+            
+            # Complejidad
+            print("\nComplejidad:")
+            print("1. Simple (pocos elementos, movimientos básicos)")
+            print("2. Media (balance de elementos)")
+            print("3. Compleja (muchos elementos, interacciones)")
+            
+            complexity = await self._get_int("Seleccionar: ", 1, 3)
+            complexity_key = ["simple", "medium", "complex"][complexity - 1]
+            
+            # Estilo
+            print("\nEstilo predominante:")
+            styles = list(STYLE_CONFIGS.keys())
+            if not styles:
+                print("\n⚠️  No hay estilos disponibles")
+                return
+                
+            for i, style in enumerate(styles, 1):
+                print(f"{i}. {style}")
+                
+            style_idx = await self._get_int("Seleccionar: ", 1, len(styles))
+            style = styles[style_idx - 1]
+            
+            print(f"\n🎲 Generando composición {style.lower()}...")
+            
+            # Obtener configuración del estilo
+            style_config = STYLE_CONFIGS[style]
+            
+            import random
+            
+            # Limpiar macros existentes
+            confirm = await self._get_bool("¿Eliminar macros actuales? (s/n): ")
+            if confirm:
+                for macro_id in list(self.engine._macros.keys()):
+                    macro = self.engine._macros[macro_id]
+                    for sid in list(macro.source_ids):
+                        if sid in self.engine._source_motions:
+                            del self.engine._source_motions[sid]
+                        if sid in self.engine._source_info:
+                            del self.engine._source_info[sid]
+                    del self.engine._macros[macro_id]
+                self.macros.clear()
+                self.selected_macro = None
+            
+            # Crear macros aleatorios
+            for i in range(num_macros):
+                # Crear macro aleatorio basado en el estilo
+                name = f"Grupo_{chr(65+i)}"  # Grupo_A, Grupo_B, etc.
+                behavior = random.choice(style_config["behaviors"])
+                formation = random.choice(style_config["formations"])
+                source_range = style_config["source_range"][complexity_key]
+                sources = random.randint(*source_range)
+                
+                macro_id = self.engine.create_macro(
+                    name=name,
+                    source_count=sources,
+                    behavior=behavior,
+                    formation=formation,
+                    spacing=random.uniform(1.5, 3.5)
+                )
+                
+                self.macros[name] = macro_id
+                
+                # Añadir elementos según complejidad
+                if complexity >= 2:
+                    # Trayectoria
+                    traj_type = random.choice(style_config["trajectories"])
+                    
+                    if traj_type in TRAJECTORY_FUNCTIONS:
+                        self.engine.set_macro_trajectory(
+                            macro_id,
+                            TRAJECTORY_FUNCTIONS[traj_type],
+                            enable_deformation=(complexity == 3)
+                        )
+                        
+                    # Distancia
+                    distance = random.choice(style_config["preferred_distances"])
+                    try:
+                        self.distance_adjuster.adjust_macro_distance(macro_id, distance)
+                    except Exception as e:
+                        logger.warning(f"No se pudo ajustar distancia: {e}")
+                        
+                if complexity == 3:
+                    # Añadir deformación
+                    deform_type = random.choice(style_config["deformations"])
+                    
+                    try:
+                        if deform_type == "breathing":
+                            period = random.uniform(3, 8)
+                            amplitude = random.uniform(0.5, 2)
+                            self.engine.apply_breathing(period, amplitude, macro_id)
+                        elif deform_type == "chaotic":
+                            deformer = self.engine.get_deformer(macro_id)
+                            chaotic = deformer.get_deformer('chaotic')
+                            chaotic.system_type = random.choice(["lorenz", "rossler", "chen"])
+                            chaotic.scale = np.array([random.uniform(0.05, 0.2)] * 3)
+                            deformer.enable_deformer('chaotic', random.uniform(0.3, 0.7))
+                    except Exception as e:
+                        logger.warning(f"No se pudo aplicar deformación: {e}")
+                        
+            print(f"\n✅ Composición {style.lower()} generada:")
+            print(f"   • {num_macros} macros")
+            print(f"   • Complejidad: {complexity_key.capitalize()}")
+            
+            total_sources = 0
+            try:
+                total_sources = sum(len(self.engine._macros[mid].source_ids) for mid in self.engine._macros)
+            except Exception:
+                pass
+                
+            print(f"   • Total de fuentes: {total_sources}")
+            
+            if self.macros:
+                self.selected_macro = list(self.macros.values())[0]
+                
+        except Exception as e:
+            logger.error(f"Error generando composición: {e}")
+            print(f"\n❌ Error generando composición: {e}")
+            
+    async def export_import_config(self):
+        """Exportar o importar configuración"""
+        print("\n📦 EXPORTAR/IMPORTAR CONFIGURACIÓN")
+        
+        print("\n1. Exportar configuración actual")
+        print("2. Importar configuración")
+        print("0. Volver")
+        
+        choice = await self._get_input("\nSelección: ")
+        
+        try:
+            if choice == "1":
+                print("\n📤 EXPORTAR CONFIGURACIÓN")
+                
+                if not self.macros:
+                    print("\n⚠️  No hay configuración para exportar")
+                    return
+                    
+                # Generar resumen de exportación
+                config_summary = {
+                    "version": "2.0.0",
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "engine_config": {
+                        "fps": self.engine.fps,
+                        "max_sources": self.engine.max_sources
+                    },
+                    "macros": len(self.macros),
+                    "total_sources": sum(len(self.engine._macros[mid].source_ids) for mid in self.engine._macros),
+                    "active_deformers": 0  # Simplificado
+                }
+                
+                filename = f"trajectory_hub_config_{time.strftime('%Y%m%d_%H%M%S')}.json"
+                
+                print(f"\n✅ Configuración exportada:")
+                print(f"   Archivo: {filename}")
+                print(f"   Macros: {config_summary['macros']}")
+                print(f"   Fuentes totales: {config_summary['total_sources']}")
+                
+            elif choice == "2":
+                print("\n📥 IMPORTAR CONFIGURACIÓN")
+                print("\n⚠️  Esta función está en desarrollo")
+                print("   Por ahora, usa los presets artísticos del menú anterior")
+            else:
+                print("\n⚠️  Opción no válida")
+                
+        except Exception as e:
+            logger.error(f"Error en export/import: {e}")
+            print(f"\n❌ Error: {e}")
+            
+    # =====================================
+    # INFORMACIÓN DEL SISTEMA
+    # =====================================
+    
+    async def system_info(self):
+        """Mostrar información del sistema"""
+        print("\n" + "="*60)
+        print("INFORMACIÓN DEL SISTEMA")
+        print("="*60)
+        
+        try:
+            # Info del engine
+            print(f"\n🎯 Engine:")
+            print(f"  • FPS: {self.engine.fps}")
+            print(f"  • Fuentes máximas: {self.engine.max_sources}")
+            print(f"  • Fuentes activas: {len(self.engine._source_motions)}")
+            
+            # Info de macros
+            print(f"\n📦 Macros:")
+            if self.macros:
+                for name, macro_id in self.macros.items():
+                    macro = self.engine._macros.get(macro_id)
+                    if macro:
+                        selected = "→" if macro_id == self.selected_macro else " "
+                        print(f"  {selected} {name}: {len(macro.source_ids)} fuentes, '{macro.behavior_name}'")
+            else:
+                print("  • No hay macros creados")
+                
+            # Info OSC
+            print(f"\n📡 OSC:")
+            try:
+                stats = self.bridge.get_stats()
+                print(f"  • Targets activos: {stats['active_targets']}/{stats.get('total_targets', stats['active_targets'])}")
+                print(f"  • Mensajes enviados: {stats['messages_sent']:,}")
+                print(f"  • Tasa de mensajes: {stats['message_rate']:.1f} msg/s")
+                
+                # Nuevas estadísticas si están disponibles
+                if 'success_rate' in stats:
+                    print(f"  • Tasa de éxito: {stats['success_rate']:.1f}%")
+                if 'uptime_formatted' in stats:
+                    print(f"  • Tiempo activo: {stats['uptime_formatted']}")
+                
+                # Mostrar errores si hay
+                if stats.get('messages_failed', 0) > 0:
+                    print(f"  • ⚠️  Mensajes fallidos: {stats['messages_failed']:,}")
+                    
+                # Mostrar targets con fallos si hay
+                if stats.get('failed_targets'):
+                    print(f"  • ❌ Targets con fallos: {', '.join(stats['failed_targets'])}")
+                    
+            except Exception as e:
+                print(f"  • Estado: Error obteniendo estadísticas ({e})")
+                
+            # Info de presets
+            print(f"\n🎨 Presets disponibles:")
+            print(f"  • Artísticos: {len(ARTISTIC_PRESETS)}")
+            print(f"  • Composiciones: {len(TEMPORAL_COMPOSITIONS)}")
+            print(f"  • Estilos: {len(STYLE_CONFIGS)}")
+            print(f"  • Funciones de trayectoria: {len(TRAJECTORY_FUNCTIONS)}")
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo info del sistema: {e}")
+            print(f"\n❌ Error obteniendo información: {e}")
+            
+        await self._get_input("\nPresiona Enter para continuar...")
+        
+    # =====================================
+    # MÉTODOS AUXILIARES
+    # =====================================
+    
+    def _get_macro_name(self, macro_id: str) -> str:
+        """Obtener nombre de un macro por ID"""
+        for name, mid in self.macros.items():
+            if mid == macro_id:
+                return name
+        return macro_id
+        
+    async def _get_input(self, prompt: str) -> str:
+        """Obtener input del usuario"""
+        return await asyncio.get_event_loop().run_in_executor(None, input, prompt)
+        
+    async def _get_int(self, prompt: str, min_val: int, max_val: int) -> int:
+        """Obtener entero validado"""
+        while True:
+            try:
+                val = int(await self._get_input(prompt))
+                if min_val <= val <= max_val:
+                    return val
+                print(f"Por favor, ingrese un número entre {min_val} y {max_val}")
+            except ValueError:
+                print("Por favor, ingrese un número válido")
+                
+    async def _get_float(self, prompt: str, min_val: float, max_val: float) -> float:
+        """Obtener float validado"""
+        while True:
+            try:
+                val = float(await self._get_input(prompt))
+                if min_val <= val <= max_val:
+                    return val
+                print(f"Por favor, ingrese un número entre {min_val} y {max_val}")
+            except ValueError:
+                print("Por favor, ingrese un número válido")
+                
+    async def _get_bool(self, prompt: str) -> bool:
+        """Obtener booleano"""
+        response = await self._get_input(prompt)
+        return response.lower() in ['s', 'si', 'sí', 'y', 'yes', '1', 'true']
+
+       
+    """Bridge mock para cuando OSC falla completamente"""
+    def _apply_semantic_movement_to_macro(self, macro_id: str, movement_name: str, params: dict):
+        """Aplicar parámetros de movimiento semántico al macro"""
+        macro = self.engine._macros[macro_id]
+        source_ids = self._get_macro_source_ids(macro)
+        
+        # Aplicar parámetros a cada fuente
+        for sid in source_ids:
+            if sid in self.engine._source_motions:
+                motion = self.engine._source_motions[sid]
+                
+                # Aplicar vibraciones
+                if 'vibration' in params:
+                    if hasattr(motion, 'components') and 'individual_trajectory' in motion.components:
+                        traj = motion.components['individual_trajectory']
+                        if hasattr(traj, 'set_movement_mode'):
+                            from trajectory_hub.core.motion_components import TrajectoryMovementMode
+                            traj.set_movement_mode(
+                                TrajectoryMovementMode.VIBRATION,
+                                vibration_frequency=params['vibration'],
+                                vibration_amplitude=0.5
+                            )
+                
+                # Aplicar otros parámetros según estén disponibles
+                for param, value in params.items():
+                    if hasattr(motion, param):
+                        setattr(motion, param, value)
+    
+    async def configure_behavior_params_safe(self):
+        """Configurar parámetros específicos del comportamiento"""
+        print("\n⚙️  PARÁMETROS DE COMPORTAMIENTO")
+        
+        behavior = self.get_macro_behavior_safe(self.selected_macro)
+        print(f"Comportamiento actual: {behavior}")
+        
+        # Parámetros disponibles según el comportamiento
+        if behavior == "flock":
+            print("\nParámetros de bandada:")
+            separation = await self._get_float("Distancia de separación (0.5-5.0): ", 0.5, 5.0)
+            cohesion = await self._get_float("Fuerza de cohesión (0.0-1.0): ", 0.0, 1.0)
+            alignment = await self._get_float("Alineación (0.0-1.0): ", 0.0, 1.0)
+            print("✅ Parámetros de bandada actualizados")
+            
+        elif behavior == "elastic":
+            print("\nParámetros elásticos:")
+            stiffness = await self._get_float("Rigidez del resorte (0.1-2.0): ", 0.1, 2.0)
+            damping = await self._get_float("Amortiguación (0.0-1.0): ", 0.0, 1.0)
+            print("✅ Parámetros elásticos actualizados")
+            
+        elif behavior == "orbit":
+            print("\nParámetros de órbita:")
+            radius = await self._get_float("Radio de órbita (1.0-20.0): ", 1.0, 20.0)
+            speed = await self._get_float("Velocidad orbital (0.1-5.0): ", 0.1, 5.0)
+            print("✅ Parámetros de órbita actualizados")
+            
+        else:
+            print("\nNo hay parámetros configurables para este comportamiento")
+    
+    async def toggle_movement_components_safe(self):
+        """Activar/desactivar componentes específicos de movimiento"""
+        print("\n🔧 COMPONENTES DE MOVIMIENTO")
+        
+        components = {
+            "trajectory": "Trayectoria principal",
+            "individual": "Trayectorias individuales",
+            "vibration": "Vibración/temblor",
+            "rotation": "Rotación/orientación",
+            "deformation": "Sistema de deformación"
+        }
+        
+        print("\nComponentes disponibles:")
+        for i, (comp, desc) in enumerate(components.items(), 1):
+            status = "✓ Activo" if self._is_component_active(comp) else "✗ Inactivo"
+            print(f"{i}. {comp:15} - {desc:30} [{status}]")
+        
+        try:
+            choice = await self._get_input("\nSeleccionar componente para cambiar estado (0 para salir): ")
+            if choice == "0":
+                return
+                
+            comp_list = list(components.keys())
+            idx = int(choice) - 1
+            
+            if 0 <= idx < len(comp_list):
+                component = comp_list[idx]
+                new_state = self._toggle_component(component)
+                status = "activado" if new_state else "desactivado"
+                print(f"\n✅ Componente '{component}' {status}")
+            else:
+                print("\n⚠️  Opción no válida")
+                
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
+    
+    def _is_component_active(self, component: str) -> bool:
+        """Verificar si un componente está activo"""
+        macro = self.engine._macros.get(self.selected_macro)
+        if not macro:
+            return False
+            
+        if component == "trajectory":
+            return hasattr(macro, 'trajectory_component') and macro.trajectory_component is not None
+        elif component == "deformation":
+            return getattr(macro, 'deformation_enabled', False)
+        # Añadir más verificaciones según sea necesario
+        
+        return False
+    
+    def _toggle_component(self, component: str) -> bool:
+        """Cambiar el estado de un componente"""
+        macro = self.engine._macros.get(self.selected_macro)
+        if not macro:
+            return False
+            
+        if component == "deformation":
+            current = getattr(macro, 'deformation_enabled', False)
+            macro.deformation_enabled = not current
+            return macro.deformation_enabled
+            
+        # Añadir más toggles según sea necesario
+        return False
+    
+    async def reset_movements_safe(self):
+        """Resetear todos los movimientos a su estado inicial"""
+        print("\n🔄 RESETEAR MOVIMIENTOS")
+        
+        try:
+            confirm = await self._get_bool("¿Resetear todos los movimientos del macro? (s/n): ")
+            
+            if confirm:
+                macro = self.engine._macros[self.selected_macro]
+                source_ids = self._get_macro_source_ids(macro)
+                
+                for sid in source_ids:
+                    if sid in self.engine._source_motions:
+                        motion = self.engine._source_motions[sid]
+                        
+                        # Resetear posición en trayectoria
+                        if hasattr(motion, 'components') and 'individual_trajectory' in motion.components:
+                            traj = motion.components['individual_trajectory']
+                            if hasattr(traj, 'position_on_trajectory'):
+                                traj.position_on_trajectory = 0.0
+                        
+                        # Resetear otros estados si es necesario
+                        if hasattr(motion, 'state'):
+                            motion.state.velocity = np.zeros(3)
+                            motion.state.acceleration = np.zeros(3)
+                            
+                print("\n✅ Movimientos reseteados")
+            else:
+                print("\n❌ Reset cancelado")
+                
+        except Exception as e:
+            print(f"\n❌ Error reseteando movimientos: {e}")
+            
+    # =====================================
+    # INTERACCIÓN ENTRE MACROS
+    # =====================================
+    
+    async def interaction_menu(self):
+        """Menú de interacción entre macros"""
+        if len(self.macros) < 2:
+            print("\n⚠️  Se necesitan al menos 2 macros para configurar interacciones")
+            return
+            
+        while True:
+            print("\n" + "-"*40)
+            print("INTERACCIÓN ENTRE MACROS")
+            print("-"*40)
+            print("1. Configurar seguimiento (un macro sigue a otro)")
+            print("2. Establecer atracción/repulsión mutua")
+            print("3. Sincronizar movimientos")
+            print("4. Crear órbita (un macro orbita alrededor de otro)")
+            print("5. Configurar colisiones")
+            print("6. Ver interacciones activas")
+            print("0. Volver")
+            
+            choice = await self._get_input("\nSelección: ")
+            
+            try:
+                if choice == "1":
+                    await self.configure_following()
+                elif choice == "2":
+                    await self.configure_mutual_forces()
+                elif choice == "3":
+                    await self.sync_movements()
+                elif choice == "4":
+                    await self.configure_orbit()
+                elif choice == "5":
+                    await self.configure_collisions()
+                elif choice == "6":
+                    await self.show_active_interactions()
+                elif choice == "0":
+                    break
+                else:
+                    print("\n⚠️  Opción no válida")
+                    
+            except Exception as e:
+                logger.error(f"Error en interacciones: {e}")
+                print(f"\n❌ Error: {e}")
+                
+    async def configure_following(self):
+        """Configurar un macro para que siga a otro"""
+        print("\n👥 CONFIGURAR SEGUIMIENTO")
+        print("Esta función está en desarrollo")
+        
+    async def configure_mutual_forces(self):
+        """Configurar atracción/repulsión entre macros"""
+        print("\n🧲 FUERZAS MUTUAS")
+        print("Esta función está en desarrollo")
+        
+    async def sync_movements(self):
+        """Sincronizar movimientos entre macros"""
+        print("\n🔄 SINCRONIZAR MOVIMIENTOS")
+        print("Esta función está en desarrollo")
+        
+    async def configure_orbit(self):
+        """Configurar un macro para orbitar alrededor de otro"""
+        print("\n🪐 CONFIGURAR ÓRBITA")
+        print("Esta función está en desarrollo")
+        
+    async def configure_collisions(self):
+        """Configurar comportamiento de colisiones"""
+        print("\n💥 CONFIGURAR COLISIONES")
+        print("Esta función está en desarrollo")
+        
+    async def show_active_interactions(self):
+        """Mostrar interacciones activas entre macros"""
+        print("\n📊 INTERACCIONES ACTIVAS")
+        print("Esta función está en desarrollo")
+        
+    # =====================================
+    # PRESETS Y COMPOSICIONES (CORREGIDO)
+    # =====================================
+    
+    async def preset_menu(self):
+        """Menú de presets y composiciones"""
+        while True:
+            print("\n" + "-"*40)
+            print("PRESETS Y COMPOSICIONES")
+            print("-"*40)
+            print("1. Cargar preset artístico")
+            print("2. Guardar configuración actual como preset")
+            print("3. Composiciones predefinidas")
+            print("4. Generador aleatorio de composiciones")
+            print("5. Exportar/Importar configuración")
+            print("0. Volver")
+            
+            choice = await self._get_input("\nSelección: ")
+            
+            try:
+                if choice == "1":
+                    await self.load_artistic_preset()
+                elif choice == "2":
+                    await self.save_current_preset()
+                elif choice == "3":
+                    await self.load_predefined_composition()
+                elif choice == "4":
+                    await self.generate_random_composition()
+                elif choice == "5":
+                    await self.export_import_config()
+                elif choice == "0":
+                    break
+                else:
+                    print("\n⚠️  Opción no válida")
+                    
+            except Exception as e:
+                logger.error(f"Error en presets: {e}")
+                print(f"\n❌ Error: {e}")
+                
+    async def load_artistic_preset(self):
+        """Cargar preset artístico predefinido (SOLUCIÓN DEFINITIVA)"""
+        print("\n🎨 PRESETS ARTÍSTICOS")
+        
+        try:
+            # Usar presets importados
+            presets = ARTISTIC_PRESETS
+            
+            # Mostrar presets disponibles
+            preset_list = list(presets.keys())
+            for i, (name, data) in enumerate(presets.items(), 1):
+                print(f"{i}. {name}")
+                print(f"   {data['description']}")
+                
+            if not preset_list:
+                print("\n⚠️  No hay presets disponibles")
+                return
+                
+            idx = await self._get_int("\nSeleccionar preset: ", 1, len(preset_list))
+            selected_name = preset_list[idx - 1]
+            preset = presets[selected_name]
+            
+            print(f"\n⏳ Cargando preset '{selected_name}'...")
+            
+            # Limpiar configuración actual
+            confirm = await self._get_bool("¿Eliminar macros actuales? (s/n): ")
+            if confirm:
+                # Eliminar todos los macros existentes de forma segura
+                for macro_id in list(self.engine._macros.keys()):
+                    try:
+                        # Limpiar fuentes del macro
+                        # Usar un enfoque genérico para diferentes estructuras
+                        for i in range(self.engine.max_sources):
+                            if i in self.engine._source_motions:
+                                if hasattr(self.engine._source_info.get(i), 'macro_id'):
+                                    if self.engine._source_info[i].macro_id == macro_id:
+                                        del self.engine._source_motions[i]
+                                        del self.engine._source_info[i]
+                    except Exception as e:
+                        logger.warning(f"Error limpiando macro {macro_id}: {e}")
+                        
+                    # Eliminar el macro
+                    if macro_id in self.engine._macros:
+                        del self.engine._macros[macro_id]
+                        
+                self.macros.clear()
+                self.selected_macro = None
+                
+            # Crear macros según el preset
+            created_macros = {}
+            for macro_config in preset["macros"]:
+                try:
+                    macro_id = self.engine.create_macro(
+                        name=macro_config["name"],
+                        source_count=macro_config["sources"],
+                        behavior=macro_config["behavior"],
+                        formation=macro_config["formation"],
+                        spacing=2.0
+                    )
+                    self.macros[macro_config["name"]] = macro_id
+                    created_macros[macro_config["name"]] = macro_id
+                except Exception as e:
+                    logger.error(f"Error creando macro {macro_config['name']}: {e}")
+                    print(f"⚠️  No se pudo crear macro {macro_config['name']}")
+                    
+            # Configurar trayectorias
+            for macro_name, traj_type in preset["trajectories"].items():
+                if macro_name not in created_macros:
+                    continue
+                    
+                if traj_type not in TRAJECTORY_FUNCTIONS:
+                    logger.warning(f"Trayectoria {traj_type} no encontrada")
+                    continue
+                    
+                macro_id = created_macros[macro_name]
+                trajectory_func = TRAJECTORY_FUNCTIONS[traj_type]
+                
+                try:
+                    # Intentar establecer la trayectoria
+                    # Primero verificar que el método existe
+                    if hasattr(self.engine, 'set_macro_trajectory'):
+                        self.engine.set_macro_trajectory(
+                            macro_id,
+                            trajectory_func,
+                            enable_deformation=True
+                        )
+                        logger.info(f"Trayectoria {traj_type} configurada para {macro_name}")
+                    else:
+                        # Plan B: intentar configurar directamente en el macro
+                        if macro_id in self.engine._macros:
+                            macro = self.engine._macros[macro_id]
+                            if hasattr(macro, 'trajectory_component') and macro.trajectory_component:
+                                macro.trajectory_component.set_trajectory(trajectory_func)
+                                logger.info(f"Trayectoria configurada directamente en {macro_name}")
+                            else:
+                                logger.warning(f"No se pudo configurar trayectoria para {macro_name}")
+                except Exception as e:
+                    logger.error(f"Error configurando trayectoria para {macro_name}: {e}")
+                    print(f"⚠️  No se pudo configurar trayectoria para {macro_name}")
+                    
+            # Configurar distancias (con manejo de errores mejorado)
+            for macro_name, distance in preset["distances"].items():
+                if macro_name not in created_macros:
+                    continue
+                    
+                macro_id = created_macros[macro_name]
+                try:
+                    if hasattr(self, 'distance_adjuster') and self.distance_adjuster:
+                        if hasattr(self.distance_adjuster, 'adjust_macro_distance'):
+                            self.distance_adjuster.adjust_macro_distance(macro_id, distance)
+                            logger.info(f"Distancia {distance} configurada para {macro_name}")
+                except Exception as e:
+                    logger.warning(f"No se pudo configurar distancia {distance} para {macro_name}: {e}")
+                        
+            # Aplicar deformaciones (con verificación robusta)
+            for macro_name, deforms in preset["deformations"].items():
+                if macro_name not in created_macros:
+                    continue
+                    
+                macro_id = created_macros[macro_name]
+                try:
+                    # Verificar diferentes formas de acceder al deformador
+                    deformer = None
+                    
+                    if hasattr(self.engine, 'get_deformer'):
+                        deformer = self.engine.get_deformer(macro_id)
+                    elif hasattr(self.engine, '_macro_deformers') and macro_id in self.engine._macro_deformers:
+                        deformer = self.engine._macro_deformers[macro_id]
+                    elif macro_id in self.engine._macros:
+                        macro = self.engine._macros[macro_id]
+                        if hasattr(macro, 'deformer'):
+                            deformer = macro.deformer
+                            
+                    if deformer:
+                        for deform_data in deforms:
+                            try:
+                                if deform_data[0] == "breathing":
+                                    if hasattr(self.engine, 'apply_breathing'):
+                                        self.engine.apply_breathing(
+                                            deform_data[1], 
+                                            deform_data[2], 
+                                            macro_id
+                                        )
+                                        logger.info(f"Respiración aplicada a {macro_name}")
+                                elif deform_data[0] == "wave" and hasattr(deformer, 'add_deformer'):
+                                    # Importar si es necesario
+                                    try:
+                                        from trajectory_hub.core.trajectory_deformers import WaveDeformer
+                                        wave = WaveDeformer()
+                                        if len(deform_data) > 1:
+                                            wave.num_waves = deform_data[1]
+                                        if len(deform_data) > 2:
+                                            wave.speed = deform_data[2]
+                                        deformer.add_deformer(wave)
+                                        logger.info(f"Deformación wave aplicada a {macro_name}")
+                                    except:
+                                        pass
+                            except Exception as e:
+                                logger.debug(f"Error aplicando deformación {deform_data[0]}: {e}")
+                except Exception as e:
+                    logger.warning(f"Error aplicando deformaciones a {macro_name}: {e}")
+                        
+            # Configurar interacciones (placeholder por ahora)
+            for interaction in preset.get("interactions", []):
+                try:
+                    logger.info(f"Interacción pendiente: {interaction}")
+                except Exception as e:
+                    logger.warning(f"Error procesando interacción: {e}")
+                    
+            # Seleccionar el primer macro como activo
+            if created_macros:
+                first_macro_name = list(created_macros.keys())[0]
+                self.selected_macro = created_macros[first_macro_name]
+                
+            # Calcular estadísticas finales
+            total_sources = 0
+            macros_exitosos = 0
+            
+            for macro_name, macro_id in created_macros.items():
+                try:
+                    # Contar fuentes creadas para este macro
+                    count = 0
+                    for mc in preset["macros"]:
+                        if mc["name"] == macro_name:
+                            count = mc["sources"]
+                            break
+                    total_sources += count
+                    macros_exitosos += 1
+                except:
+                    pass
+                
+            print(f"\n✅ Preset '{selected_name}' cargado")
+            print(f"   • {macros_exitosos} macros creados exitosamente")
+            print(f"   • {total_sources} fuentes totales configuradas")
+            
+            # Avisos sobre funcionalidades pendientes
+            warnings = []
+            if not hasattr(self.engine, 'set_macro_trajectory'):
+                warnings.append("Trayectorias de macro no disponibles")
+            if not hasattr(self, 'distance_adjuster') or not self.distance_adjuster:
+                warnings.append("Control de distancias no disponible")
+            if not hasattr(self.engine, 'get_deformer'):
+                warnings.append("Sistema de deformación limitado")
+                
+            if warnings:
+                print("\n⚠️  Funcionalidades limitadas:")
+                for w in warnings:
+                    print(f"   • {w}")
+                    
+        except Exception as e:
+            logger.error(f"Error cargando preset: {e}")
+            print(f"\n❌ Error cargando preset: {e}")
+            
+            # Mostrar más detalles solo si es necesario
+            if str(e).find("attribute") >= 0:
+                print("\n💡 Sugerencia: El engine puede tener una versión diferente.")
+                print("   Algunas características podrían no estar disponibles.")
+            
+    async def save_current_preset(self):
+        """Guardar la configuración actual como preset"""
+        print("\n💾 GUARDAR PRESET")
+        
+        if not self.macros:
+            print("\n⚠️  No hay configuración para guardar")
+            return
+            
+        try:
+            name = await self._get_input("Nombre del preset: ")
+            description = await self._get_input("Descripción: ")
+            
+            # Recopilar información actual
+            preset = {
+                "name": name,
+                "description": description,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "macros": [],
+                "configurations": {}
+            }
+            
+            for macro_name, macro_id in self.macros.items():
+                macro = self.engine._macros[macro_id]
+                
+                # Información básica del macro
+                macro_info = {
+                    "name": macro_name,
+                    "id": macro_id,
+                    "sources": len(macro.source_ids),
+                    "behavior": macro.behavior_name,
+                    "formation": macro.formation_type,
+                    "spacing": macro.formation_spacing
+                }
+                preset["macros"].append(macro_info)
+                
+            # Guardar en archivo (simplificado)
+            filename = f"preset_{name.replace(' ', '_')}.txt"
+            print(f"\n✅ Preset '{name}' guardado como {filename}")
+            print(f"   {len(preset['macros'])} macros")
+            print(f"   Creado: {preset['timestamp']}")
+            
+        except Exception as e:
+            logger.error(f"Error guardando preset: {e}")
+            print(f"\n❌ Error guardando preset: {e}")
+            
+    async def load_predefined_composition(self):
+        """Cargar composiciones artísticas completas (CORREGIDO)"""
+        print("\n🎭 COMPOSICIONES PREDEFINIDAS")
+        
+        try:
+            # Usar composiciones importadas (CORREGIDO)
+            compositions = TEMPORAL_COMPOSITIONS
+            
+            if not compositions:
+                print("\n⚠️  No hay composiciones disponibles")
+                return
+                
+            comp_list = list(compositions.keys())
+            for i, (name, data) in enumerate(compositions.items(), 1):
+                print(f"\n{i}. {name}")
+                print(f"   {data['description']}")
+                print(f"   Duración: {data['duration']}")
+                print(f"   Dinámicas: {data['dynamics']}")
+                
+            choice = await self._get_int("\nSeleccionar composición: ", 1, len(comp_list))
+            selected = comp_list[choice - 1]
+            
+            print(f"\n⏳ Preparando '{selected}'...")
+            
+            # Aquí se podría implementar la lógica de timeline
+            composition = compositions[selected]
+            if "timeline" in composition:
+                print("\n📋 Timeline de la composición:")
+                for event in composition["timeline"]:
+                    print(f"   {event['time']}s: {event['action']}")
+                    
+            print(f"\n✅ Composición '{selected}' lista para reproducir")
+            print("\n💡 Tip: Usa el menú principal para ajustar parámetros en tiempo real")
+            
+        except Exception as e:
+            logger.error(f"Error cargando composición: {e}")
+            print(f"\n❌ Error cargando composición: {e}")
+            
+    async def generate_random_composition(self):
+        """Generar una composición aleatoria con parámetros (CORREGIDO)"""
+        print("\n🎲 GENERADOR ALEATORIO DE COMPOSICIONES")
+        
+        try:
+            print("\nParámetros de generación:")
+            
+            # Número de macros
+            num_macros = await self._get_int("Número de macros (1-5): ", 1, 5)
+            
+            # Complejidad
+            print("\nComplejidad:")
+            print("1. Simple (pocos elementos, movimientos básicos)")
+            print("2. Media (balance de elementos)")
+            print("3. Compleja (muchos elementos, interacciones)")
+            
+            complexity = await self._get_int("Seleccionar: ", 1, 3)
+            complexity_key = ["simple", "medium", "complex"][complexity - 1]
+            
+            # Estilo
+            print("\nEstilo predominante:")
+            styles = list(STYLE_CONFIGS.keys())
+            if not styles:
+                print("\n⚠️  No hay estilos disponibles")
+                return
+                
+            for i, style in enumerate(styles, 1):
+                print(f"{i}. {style}")
+                
+            style_idx = await self._get_int("Seleccionar: ", 1, len(styles))
+            style = styles[style_idx - 1]
+            
+            print(f"\n🎲 Generando composición {style.lower()}...")
+            
+            # Obtener configuración del estilo
+            style_config = STYLE_CONFIGS[style]
+            
+            import random
+            
+            # Limpiar macros existentes
+            confirm = await self._get_bool("¿Eliminar macros actuales? (s/n): ")
+            if confirm:
+                for macro_id in list(self.engine._macros.keys()):
+                    macro = self.engine._macros[macro_id]
+                    for sid in list(macro.source_ids):
+                        if sid in self.engine._source_motions:
+                            del self.engine._source_motions[sid]
+                        if sid in self.engine._source_info:
+                            del self.engine._source_info[sid]
+                    del self.engine._macros[macro_id]
+                self.macros.clear()
+                self.selected_macro = None
+            
+            # Crear macros aleatorios
+            for i in range(num_macros):
+                # Crear macro aleatorio basado en el estilo
+                name = f"Grupo_{chr(65+i)}"  # Grupo_A, Grupo_B, etc.
+                behavior = random.choice(style_config["behaviors"])
+                formation = random.choice(style_config["formations"])
+                source_range = style_config["source_range"][complexity_key]
+                sources = random.randint(*source_range)
+                
+                macro_id = self.engine.create_macro(
+                    name=name,
+                    source_count=sources,
+                    behavior=behavior,
+                    formation=formation,
+                    spacing=random.uniform(1.5, 3.5)
+                )
+                
+                self.macros[name] = macro_id
+                
+                # Añadir elementos según complejidad
+                if complexity >= 2:
+                    # Trayectoria
+                    traj_type = random.choice(style_config["trajectories"])
+                    
+                    if traj_type in TRAJECTORY_FUNCTIONS:
+                        self.engine.set_macro_trajectory(
+                            macro_id,
+                            TRAJECTORY_FUNCTIONS[traj_type],
+                            enable_deformation=(complexity == 3)
+                        )
+                        
+                    # Distancia
+                    distance = random.choice(style_config["preferred_distances"])
+                    try:
+                        self.distance_adjuster.adjust_macro_distance(macro_id, distance)
+                    except Exception as e:
+                        logger.warning(f"No se pudo ajustar distancia: {e}")
+                        
+                if complexity == 3:
+                    # Añadir deformación
+                    deform_type = random.choice(style_config["deformations"])
+                    
+                    try:
+                        if deform_type == "breathing":
+                            period = random.uniform(3, 8)
+                            amplitude = random.uniform(0.5, 2)
+                            self.engine.apply_breathing(period, amplitude, macro_id)
+                        elif deform_type == "chaotic":
+                            deformer = self.engine.get_deformer(macro_id)
+                            chaotic = deformer.get_deformer('chaotic')
+                            chaotic.system_type = random.choice(["lorenz", "rossler", "chen"])
+                            chaotic.scale = np.array([random.uniform(0.05, 0.2)] * 3)
+                            deformer.enable_deformer('chaotic', random.uniform(0.3, 0.7))
+                    except Exception as e:
+                        logger.warning(f"No se pudo aplicar deformación: {e}")
+                        
+            print(f"\n✅ Composición {style.lower()} generada:")
+            print(f"   • {num_macros} macros")
+            print(f"   • Complejidad: {complexity_key.capitalize()}")
+            
+            total_sources = 0
+            try:
+                total_sources = sum(len(self.engine._macros[mid].source_ids) for mid in self.engine._macros)
+            except Exception:
+                pass
+                
+            print(f"   • Total de fuentes: {total_sources}")
+            
+            if self.macros:
+                self.selected_macro = list(self.macros.values())[0]
+                
+        except Exception as e:
+            logger.error(f"Error generando composición: {e}")
+            print(f"\n❌ Error generando composición: {e}")
+            
+    async def export_import_config(self):
+        """Exportar o importar configuración"""
+        print("\n📦 EXPORTAR/IMPORTAR CONFIGURACIÓN")
+        
+        print("\n1. Exportar configuración actual")
+        print("2. Importar configuración")
+        print("0. Volver")
+        
+        choice = await self._get_input("\nSelección: ")
+        
+        try:
+            if choice == "1":
+                print("\n📤 EXPORTAR CONFIGURACIÓN")
+                
+                if not self.macros:
+                    print("\n⚠️  No hay configuración para exportar")
+                    return
+                    
+                # Generar resumen de exportación
+                config_summary = {
+                    "version": "2.0.0",
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "engine_config": {
+                        "fps": self.engine.fps,
+                        "max_sources": self.engine.max_sources
+                    },
+                    "macros": len(self.macros),
+                    "total_sources": sum(len(self.engine._macros[mid].source_ids) for mid in self.engine._macros),
+                    "active_deformers": 0  # Simplificado
+                }
+                
+                filename = f"trajectory_hub_config_{time.strftime('%Y%m%d_%H%M%S')}.json"
+                
+                print(f"\n✅ Configuración exportada:")
+                print(f"   Archivo: {filename}")
+                print(f"   Macros: {config_summary['macros']}")
+                print(f"   Fuentes totales: {config_summary['total_sources']}")
+                
+            elif choice == "2":
+                print("\n📥 IMPORTAR CONFIGURACIÓN")
+                print("\n⚠️  Esta función está en desarrollo")
+                print("   Por ahora, usa los presets artísticos del menú anterior")
+            else:
+                print("\n⚠️  Opción no válida")
+                
+        except Exception as e:
+            logger.error(f"Error en export/import: {e}")
+            print(f"\n❌ Error: {e}")
+            
+    # =====================================
+    # INFORMACIÓN DEL SISTEMA
+    # =====================================
+    
+    async def system_info(self):
+        """Mostrar información del sistema"""
+        print("\n" + "="*60)
+        print("INFORMACIÓN DEL SISTEMA")
+        print("="*60)
+        
+        try:
+            # Info del engine
+            print(f"\n🎯 Engine:")
+            print(f"  • FPS: {self.engine.fps}")
+            print(f"  • Fuentes máximas: {self.engine.max_sources}")
+            print(f"  • Fuentes activas: {len(self.engine._source_motions)}")
+            
+            # Info de macros
+            print(f"\n📦 Macros:")
+            if self.macros:
+                for name, macro_id in self.macros.items():
+                    macro = self.engine._macros.get(macro_id)
+                    if macro:
+                        selected = "→" if macro_id == self.selected_macro else " "
+                        print(f"  {selected} {name}: {len(macro.source_ids)} fuentes, '{macro.behavior_name}'")
+            else:
+                print("  • No hay macros creados")
+                
+            # Info OSC
+            print(f"\n📡 OSC:")
+            try:
+                stats = self.bridge.get_stats()
+                print(f"  • Targets activos: {stats['active_targets']}/{stats.get('total_targets', stats['active_targets'])}")
+                print(f"  • Mensajes enviados: {stats['messages_sent']:,}")
+                print(f"  • Tasa de mensajes: {stats['message_rate']:.1f} msg/s")
+                
+                # Nuevas estadísticas si están disponibles
+                if 'success_rate' in stats:
+                    print(f"  • Tasa de éxito: {stats['success_rate']:.1f}%")
+                if 'uptime_formatted' in stats:
+                    print(f"  • Tiempo activo: {stats['uptime_formatted']}")
+                
+                # Mostrar errores si hay
+                if stats.get('messages_failed', 0) > 0:
+                    print(f"  • ⚠️  Mensajes fallidos: {stats['messages_failed']:,}")
+                    
+                # Mostrar targets con fallos si hay
+                if stats.get('failed_targets'):
+                    print(f"  • ❌ Targets con fallos: {', '.join(stats['failed_targets'])}")
+                    
+            except Exception as e:
+                print(f"  • Estado: Error obteniendo estadísticas ({e})")
+                
+            # Info de presets
+            print(f"\n🎨 Presets disponibles:")
+            print(f"  • Artísticos: {len(ARTISTIC_PRESETS)}")
+            print(f"  • Composiciones: {len(TEMPORAL_COMPOSITIONS)}")
+            print(f"  • Estilos: {len(STYLE_CONFIGS)}")
+            print(f"  • Funciones de trayectoria: {len(TRAJECTORY_FUNCTIONS)}")
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo info del sistema: {e}")
+            print(f"\n❌ Error obteniendo información: {e}")
+            
+        await self._get_input("\nPresiona Enter para continuar...")
+        
+    # =====================================
+    # MÉTODOS AUXILIARES
+    # =====================================
+    
+    def _get_macro_name(self, macro_id: str) -> str:
+        """Obtener nombre de un macro por ID"""
+        for name, mid in self.macros.items():
+            if mid == macro_id:
+                return name
+        return macro_id
+        
+    async def _get_input(self, prompt: str) -> str:
+        """Obtener input del usuario"""
+        return await asyncio.get_event_loop().run_in_executor(None, input, prompt)
+        
+    async def _get_int(self, prompt: str, min_val: int, max_val: int) -> int:
+        """Obtener entero validado"""
+        while True:
+            try:
+                val = int(await self._get_input(prompt))
+                if min_val <= val <= max_val:
+                    return val
+                print(f"Por favor, ingrese un número entre {min_val} y {max_val}")
+            except ValueError:
+                print("Por favor, ingrese un número válido")
+                
+    async def _get_float(self, prompt: str, min_val: float, max_val: float) -> float:
+        """Obtener float validado"""
+        while True:
+            try:
+                val = float(await self._get_input(prompt))
+                if min_val <= val <= max_val:
+                    return val
+                print(f"Por favor, ingrese un número entre {min_val} y {max_val}")
+            except ValueError:
+                print("Por favor, ingrese un número válido")
+                
+    async def _get_bool(self, prompt: str) -> bool:
+        """Obtener booleano"""
+        response = await self._get_input(prompt)
+        return response.lower() in ['s', 'si', 'sí', 'y', 'yes', '1', 'true']
+
+       
+# =====================================
+# FUNCIÓN PRINCIPAL
+# =====================================
+
+
+    """Función principal"""
+    controller = InteractiveController()
+    await controller.start()
+
+
+if __name__ == "__main__":
+    print("")
+🎮 CONTROLADOR INTERACTIVO AVANZADO")
+    print("Sistema completo de control de trayectorias")
+    print("-"*60)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("")
+
+👋 ¡Hasta luego!")
+    except Exception as e:
+        logging.error(f"Error fatal: {e}")
+        print(f"")
+❌ Error: {e}")

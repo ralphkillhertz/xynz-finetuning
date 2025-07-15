@@ -1,0 +1,176 @@
+{
+  "🔴 ESTADO_CRÍTICO": {
+    "timestamp": "2025-07-10T02:30:00",
+    "session_id": "20250710_macro_system_fixes",
+    "project": "trajectory_hub",
+    "version": "0.91",
+    "status": "OSC funcionando, límite 16 sources en investigación",
+    "vibe_mode": "ACTIVE"
+  },
+  
+  "📊 SESIÓN_ACTUAL": {
+    "inicio": "2025-07-10T01:23:00",
+    "duración": "1h 7min",
+    "objetivos": [
+      "Verificar sistema de deltas",
+      "Arreglar bugs en macros",
+      "Restaurar funcionalidades perdidas",
+      "Implementar nuevas features"
+    ],
+    "completados": {
+      "osc_funcionando": "✅",
+      "random_sphere_3d": "✅",
+      "ids_unicos": "✅", 
+      "limite_2_macros": "⚠️ Parcial - 16 sources máx"
+    }
+  },
+  
+  "🔧 TRABAJO_REALIZADO": {
+    "bugs_corregidos": {
+      "random_formation": {
+        "problema": "Creaba círculo 2D",
+        "solucion": "Implementado random 3D real",
+        "archivo": "enhanced_trajectory_engine.py"
+      },
+      "sphere_formation": {
+        "problema": "Creaba círculo 2D",
+        "solucion": "Implementado sphere 3D con golden angle",
+        "archivo": "enhanced_trajectory_engine.py"
+      },
+      "macro_ids": {
+        "problema": "IDs colisionaban, solo 2 macros visibles",
+        "solucion": "Implementado contador global _next_source_id",
+        "archivos": ["enhanced_trajectory_engine.py"]
+      },
+      "limite_16_sources": {
+        "problema": "Hardcoded limit en update()",
+        "solucion": "Eliminado [:16] slice",
+        "estado": "⚠️ Aún solo 16 sources llegan a Spat"
+      }
+    },
+    
+    "scripts_generados": [
+      "fix_random_sphere_formations.py",
+      "diagnose_macro_limit.py",
+      "diagnose_macro_limit_v2.py",
+      "fix_macro_id_collision.py",
+      "fix_create_macro_use_counter.py",
+      "fix_macro_limits_complete.py",
+      "test_multiple_macros.py",
+      "test_multiple_macros_fixed.py",
+      "test_multiple_macros_final.py",
+      "diagnose_osc_sending.py",
+      "test_osc_all_sources.py",
+      "verify_osc_limit.py",
+      "test_osc_simple.py"
+    ]
+  },
+  
+  "📋 FEEDBACK_USUARIO": {
+    "bugs": [
+      "Random y Sphere crean círculos → ✅ ARREGLADO",
+      "Solo 2 macros visibles → ⚠️ PARCIAL (límite 16 sources)"
+    ],
+    "regresiones": [
+      "Seleccionar Macro → ❌ PENDIENTE",
+      "Borrar Macro → ❌ PENDIENTE",
+      "Configurar distancia al centro → ❌ PENDIENTE",
+      "Nombres de fuentes personalizados → ❌ PENDIENTE",
+      "Fuentes agrupadas (Grupo = Macro) → ❌ PENDIENTE"
+    ],
+    "features_nuevas": [
+      "Funciones matemáticas para formaciones → ❌ PENDIENTE",
+      "Centro del macro en (x,y,z) → ❌ PENDIENTE",
+      "Variar distancia post-creación → ❌ PENDIENTE",
+      "Desactivar macro (stop OSC) → ❌ PENDIENTE"
+    ]
+  },
+  
+  "⚠️ PROBLEMA_ACTUAL": {
+    "descripcion": "Solo 16 sources visibles en Spat aunque se crean más",
+    "diagnostico": [
+      "Se crean correctamente 40 sources",
+      "Engine tiene 40 sources activas",
+      "Solo las primeras 16 se envían por OSC",
+      "Comentario obsoleto 'Max 16 sources' pero código ya no tiene [:16]"
+    ],
+    "proximos_pasos": [
+      "Verificar si hay otro límite en el código",
+      "Revisar si Spat tiene límite de recepción",
+      "Debugging del método update()"
+    ]
+  },
+  
+  "modulos_modificados": [
+    "trajectory_hub/core/enhanced_trajectory_engine.py",
+    "trajectory_hub/core/spat_osc_bridge.py",
+    "trajectory_hub/interface/interactive_controller.py"
+  ],
+  
+  "cambios_principales": [
+    "Random ahora genera posiciones 3D aleatorias reales",
+    "Sphere ahora genera esfera 3D con distribución uniforme",
+    "Sistema de IDs únicos con contador global _next_source_id",
+    "Eliminado límite hardcodeado de 16 sources (pero aún no funciona)",
+    "create_macro ahora usa IDs incrementales únicos"
+  ],
+  
+  "pendiente_proxima_sesion": [
+    "Resolver límite real de 16 sources en OSC",
+    "Implementar selección/borrado de macros",
+    "Añadir configuración de distancia y centro",
+    "Sistema de nombres personalizados",
+    "Funciones matemáticas para formaciones",
+    "Desactivación de macros"
+  ],
+  
+  "modulos_criticos": {
+    "enhanced_trajectory_engine.py": "v0.91 - IDs únicos, formaciones 3D",
+    "spat_osc_bridge.py": "v0.90 - Funcionando correctamente",
+    "interactive_controller.py": "v0.88 - command_processor mal inicializado"
+  },
+  
+  "🧬 DNA_STATUS": {
+    "version": "2.0",
+    "cumplimiento": "30%",
+    "violaciones_activas": [
+      "Engine calcula formaciones internamente",
+      "UI accede directamente a Engine sin CommandProcessor",
+      "FormationManager existe pero no se usa correctamente",
+      "Interactive Controller con 38+ métodos (máx 25)"
+    ],
+    "mejoras_urgentes": [
+      "Implementar CommandProcessor correctamente",
+      "Mover cálculo formaciones a FormationManager",
+      "Engine debe solo aplicar positions[]"
+    ]
+  },
+  
+  "📊 MÉTRICAS_SESIÓN": {
+    "archivos_modificados": 3,
+    "bugs_resueltos": 2.5,
+    "bugs_pendientes": 0.5,
+    "features_pendientes": 9,
+    "scripts_creados": 13,
+    "tiempo_sesion": "67 minutos"
+  },
+  
+  "💡 NOTAS_IMPORTANTES": [
+    "Sistema funcional pero con límite misterioso de 16 sources",
+    "Arquitectura viola principios del DNA pero funciona",
+    "Usuario necesita funcionalidades de gestión de macros",
+    "Priorizar funcionalidad sobre arquitectura perfecta"
+  ],
+  
+  "🚨 COMANDOS_CLAVE": {
+    "test_sistema": "python -m trajectory_hub.interface.interactive_controller",
+    "test_macros": "python test_multiple_macros_final.py",
+    "diagnostico": "python diagnose_osc_sending.py"
+  },
+  
+  "✨ LOGROS_SESIÓN": [
+    "Random y Sphere ahora son verdaderamente 3D",
+    "Sistema de IDs únicos implementado",
+    "Identificado problema de límite 16 sources"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2025-07-08T20:43:00.231348",
+  "test_results": {
+    "tests_passed": 0,
+    "tests_failed": 8,
+    "components": {
+      "ConcentrationComponent": "\u274c ERROR: 'dict' object has no attribute 'append'",
+      "IndividualTrajectory": "\u274c ERROR: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices",
+      "MacroTrajectory": "\u274c ERROR: set_macro_trajectory() got an unexpected keyword argument 'speed'",
+      "MacroRotation": "\u274c ERROR: unsupported operand type(s) for *: 'float' and 'MotionState'",
+      "ManualMacroRotation": "\u274c ERROR: unsupported operand type(s) for *: 'float' and 'MotionState'",
+      "IndividualRotation": "\u274c ERROR: ID 10 excede el m\u00e1ximo de fuentes (10)",
+      "ManualIndividualRotation": "\u274c ERROR: ID 11 excede el m\u00e1ximo de fuentes (10)",
+      "CombinedMovements": "\u274c ERROR: set_individual_trajectory() got an unexpected keyword argument 'trajectory_type'"
+    }
+  },
+  "system_status": "NEEDS_ATTENTION"
+}

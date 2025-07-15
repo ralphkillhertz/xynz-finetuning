@@ -1,0 +1,123 @@
+{
+  "metadata": {
+    "source_version": "trajectory_hub_20250705_130742",
+    "extraction_date": "2025-07-07T16:27:10.242470",
+    "purpose": "Complete specification for delta migration"
+  },
+  "files_analyzed": [],
+  "components": {
+    "engine": {
+      "methods": [
+        "__post_init__",
+        "__init__",
+        "_apply_formation",
+        "set_individual_trajectory",
+        "set_macro_speed",
+        "set_macro_rotation",
+        "set_trajectory_rotation",
+        "_calculate_rotation_matrix",
+        "set_individual_rotation",
+        "rotate_individual_batch",
+        "_apply_macro_rotation",
+        "set_mixed_trajectories",
+        "apply_breathing",
+        "apply_concentration",
+        "apply_dispersion",
+        "apply_orientation_preset",
+        "set_modulator_intensity",
+        "_prepare_osc_data",
+        "set_source_name",
+        "_send_osc_update",
+        "stop",
+        "__del__",
+        "_apply_trajectory_rotations",
+        "apply_algorithmic_rotation_ms",
+        "apply_algorithmic_rotation_is",
+        "_apply_algorithmic_rotations",
+        "stop_algorithmic_rotation_ms",
+        "stop_algorithmic_rotation_is",
+        "stop_all_algorithmic_rotations",
+        "_calculate_rotation_matrix"
+      ],
+      "has_step": true,
+      "has_update": true,
+      "has_concentration": true,
+      "arrays": {
+        "_positions": true,
+        "_orientations": true,
+        "_macros": true
+      }
+    },
+    "motion": {
+      "classes": [
+        "MotionState",
+        "ConcentrationMode",
+        "ConcentrationCurve",
+        "MotionComponent",
+        "OrientationModulation",
+        "AdvancedOrientationModulation",
+        "IndividualTrajectory",
+        "MacroMovement",
+        "MacroTrajectory",
+        "GroupBehavior",
+        "EnvironmentalForces",
+        "TrajectoryMovementMode",
+        "TrajectoryDisplacementMode",
+        "TrajectoryTransform",
+        "SourceMotion",
+        "ConcentrationComponent"
+      ],
+      "has_individual_trajectory": true,
+      "has_source_motion": true
+    },
+    "osc": {
+      "endpoints": [
+        "source/{}/mute",
+        "source/{}/yaw",
+        "source/{}/solo",
+        "source/{}/pitch",
+        "source/{spat_id}/yaw",
+        "source/{}/aed",
+        "source/{spat_id}/mute",
+        "source/{}/name",
+        "source/{spat_id}/pitch",
+        "source/{spat_id}/aperture",
+        "source/{spat_id}/xyz",
+        "source/{spat_id}/roll",
+        "source/{}/gain",
+        "source/{}/xyz",
+        "source/{}/roll",
+        "source/{}/aperture"
+      ],
+      "has_groups": true
+    }
+  },
+  "exact_behaviors": {
+    "concentration": {
+      "status": "NOT_IN_MAIN_LOOP",
+      "location": "Unknown - needs manual verification",
+      "evidence": {
+        "set_macro_concentration_exists": true,
+        "returns_value": false,
+        "step_uses_it": false
+      }
+    },
+    "update_order": {
+      "verified": false,
+      "expected": [
+        "trajectory_ms",
+        "rotation_ms",
+        "trajectory_is",
+        "concentration (if exists)"
+      ],
+      "overwrite_pattern": "self._positions[sid] = value"
+    },
+    "known_conflicts": {
+      "ms_vs_is": "IS overwrites MS completely",
+      "concentration_alone": "Does not work",
+      "rotation_after_is": "Gets overwritten"
+    }
+  },
+  "critical_functions": {},
+  "known_issues": {}
+}

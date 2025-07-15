@@ -1,0 +1,216 @@
+{
+  "🧬 TRAJECTORY_HUB_DNA_v2": {
+    "version": "2.0",
+    "fecha": "2025-07-09T16:16:50.574251",
+    "inmutable": true,
+    "⚠️ INSTRUCCIONES_CRITICAS": [
+      "ESTE DOCUMENTO ES LA VERDAD ABSOLUTA DEL PROYECTO",
+      "DEBE SER LO PRIMERO QUE SE CARGUE EN CADA SESIÓN",
+      "NINGÚN CAMBIO SIN ACTUALIZAR ESTE DOCUMENTO",
+      "TODOS LOS FIXES DEBEN RESPETAR ESTA ARQUITECTURA"
+    ],
+    "📊 ESTADO_ACTUAL_REAL": {
+      "flujo_creacion_macros": {
+        "inicio": "CLI Interface",
+        "pasos": [
+          {
+            "componente": "Engine",
+            "accion": "Recibe create_macro con parámetros",
+            "detalles": "Parámetros:          self,          name: str,          source_count: int,          behavior: str = \"flock\",         formation: str = \"circle\",         spacing: float = 2.0,         **kwargs     ) -> str:         # CORRECCIÓN: Flexibilidad para source_count         if isinstance(source_count, list",
+            "problema": "Recibe 'formation' y calcula internamente"
+          },
+          {
+            "componente": "Engine",
+            "accion": "Calcula formaciones internamente",
+            "problema": "VIOLA arquitectura - debería solo aplicar posiciones"
+          }
+        ],
+        "problemas": []
+      },
+      "responsabilidades": {
+        "CLI Interface": {
+          "metodos": 15,
+          "responsabilidades": [
+            "Muestra UI"
+          ],
+          "viola_arquitectura": []
+        },
+        "Interactive Controller": {
+          "metodos": 39,
+          "responsabilidades": [
+            "Crea macros",
+            "Muestra UI",
+            "Procesa comandos"
+          ],
+          "viola_arquitectura": []
+        },
+        "Command Processor": {
+          "metodos": 12,
+          "responsabilidades": [
+            "Crea macros"
+          ],
+          "viola_arquitectura": []
+        },
+        "Formation Manager": {
+          "metodos": 1,
+          "responsabilidades": [
+            "Calcula formaciones"
+          ],
+          "viola_arquitectura": []
+        },
+        "Engine": {
+          "metodos": 54,
+          "responsabilidades": [
+            "Crea macros",
+            "Calcula formaciones",
+            "Envía OSC"
+          ],
+          "viola_arquitectura": [
+            "No debería calcular formaciones"
+          ]
+        },
+        "OSC Bridge": {
+          "metodos": 52,
+          "responsabilidades": [
+            "Envía OSC"
+          ],
+          "viola_arquitectura": []
+        }
+      }
+    },
+    "🎯 ESTADO_OBJETIVO": {
+      "principios": [
+        "SEPARACIÓN ESTRICTA DE RESPONSABILIDADES",
+        "FLUJO UNIDIRECCIONAL DE DATOS",
+        "NINGÚN COMPONENTE HACE TODO",
+        "TESTABILIDAD COMPLETA"
+      ],
+      "flujo_correcto": {
+        "1": "Usuario interactúa con UI (CLI/Interactive/MCP/Gestos)",
+        "2": "UI crea SemanticCommand",
+        "3": "CommandProcessor interpreta comando",
+        "4": "CommandProcessor usa FormationManager para calcular",
+        "5": "CommandProcessor pasa positions[] a Engine",
+        "6": "Engine aplica positions y envía OSC",
+        "7": "UI muestra resultado"
+      },
+      "responsabilidades_estrictas": {
+        "CLI Interface": [
+          "Capturar input",
+          "Mostrar output",
+          "Crear comandos"
+        ],
+        "Interactive Controller": [
+          "Navegación menús",
+          "Display",
+          "MAX 25 métodos"
+        ],
+        "Command Processor": [
+          "TODA la lógica",
+          "Orquestar",
+          "Validar"
+        ],
+        "Formation Manager": [
+          "Calcular formaciones",
+          "Nada más"
+        ],
+        "Engine": [
+          "Aplicar positions",
+          "Gestionar sources",
+          "Enviar OSC"
+        ],
+        "OSC Bridge": [
+          "Comunicación OSC",
+          "Nada de lógica"
+        ]
+      }
+    },
+    "❌ VIOLACIONES_ACTUALES": [
+      {
+        "tipo": "CRÍTICO",
+        "componente": "Engine",
+        "problema": "Calcula formaciones internamente en lugar de recibirlas",
+        "impacto": "Imposible añadir formaciones sin modificar Engine",
+        "solucion": "Engine.create_macro debe recibir positions[], no formation string"
+      },
+      {
+        "tipo": "ALTO",
+        "componente": "CLI Interface",
+        "problema": "Llama directamente a Engine sin pasar por CommandProcessor",
+        "impacto": "Lógica dispersa, difícil mantener",
+        "solucion": "Todo debe pasar por CommandProcessor"
+      },
+      {
+        "tipo": "MEDIO",
+        "componente": "Interactive Controller",
+        "problema": "122 métodos cuando debería tener máximo 25",
+        "impacto": "Difícil de mantener y testear",
+        "solucion": "Refactorizar delegando lógica a CommandProcessor"
+      }
+    ],
+    "🛠️ ROADMAP_MIGRACION": [
+      {
+        "fase": 1,
+        "nombre": "Fix Sphere (temporal)",
+        "tareas": [
+          "Hacer que Engine use FormationManager para sphere",
+          "Verificar que OSC envíe x,y,z"
+        ],
+        "tiempo": "30 minutos",
+        "impacto": "BAJO"
+      },
+      {
+        "fase": 2,
+        "nombre": "Refactorizar create_macro",
+        "tareas": [
+          "Cambiar Engine.create_macro para recibir positions[]",
+          "Mover cálculo de formaciones a CommandProcessor",
+          "Actualizar todos los llamadores"
+        ],
+        "tiempo": "2-3 horas",
+        "impacto": "ALTO"
+      },
+      {
+        "fase": 3,
+        "nombre": "Implementar CommandProcessor completo",
+        "tareas": [
+          "Crear SemanticCommand class",
+          "Implementar interpretación de comandos",
+          "Conectar UI → CommandProcessor → Engine"
+        ],
+        "tiempo": "1 día",
+        "impacto": "ALTO"
+      },
+      {
+        "fase": 4,
+        "nombre": "Refactorizar Interactive Controller",
+        "tareas": [
+          "Extraer lógica a CommandProcessor",
+          "Reducir a 25 métodos",
+          "Solo navegación y display"
+        ],
+        "tiempo": "2 días",
+        "impacto": "MEDIO"
+      }
+    ],
+    "📋 REGLAS_INMUTABLES": {
+      "1": "Engine NUNCA calcula formaciones, solo aplica positions",
+      "2": "TODO pasa por CommandProcessor",
+      "3": "Interactive Controller máximo 25 métodos",
+      "4": "FormationManager solo calcula, no ejecuta",
+      "5": "OSC Bridge solo transmite, no procesa"
+    },
+    "🔧 PARA_ARREGLAR_SPHERE": {
+      "problema": "Engine calcula sphere como circle (2D)",
+      "solucion_temporal": "Hacer que Engine use FormationManager",
+      "solucion_correcta": "Refactorizar flujo completo",
+      "comando": "python fix_sphere_respecting_current_architecture.py"
+    },
+    "💾 PRESERVAR_ENTRE_SESIONES": [
+      "Este DNA completo",
+      "Estado de refactorización",
+      "Problemas pendientes",
+      "Decisiones arquitectónicas"
+    ]
+  }
+}

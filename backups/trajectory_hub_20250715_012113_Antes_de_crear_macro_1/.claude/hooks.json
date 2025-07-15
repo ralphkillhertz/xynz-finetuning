@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "pre_edit": {
+      "command": "cd /Volumes/RK\\ Work/Ralph\\ Killhertz/XYNZ/XYNZ-SPAT/trajectory_hub && python backup_system.py create --description 'Claude-auto-backup'",
+      "description": "Create automatic backup before edits"
+    },
+    "post_task": {
+      "command": "afplay /System/Library/Sounds/Glass.aiff",
+      "description": "Play completion sound"
+    },
+    "on_error": {
+      "command": "afplay /System/Library/Sounds/Basso.aiff",
+      "description": "Play error sound"
+    }
+  },
+  "settings": {
+    "enable_auto_backup": true,
+    "enable_sound_notifications": true,
+    "backup_interval_minutes": 5
+  }
+}

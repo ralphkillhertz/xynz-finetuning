@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "pre_edit": {
+      "command": "cd /Volumes/RK\\ Work/Ralph\\ Killhertz/XYNZ/XYNZ-SPAT/trajectory_hub && python backup_system.py create --description 'Claude-auto-backup'",
+      "description": "Create automatic backup before edits"
+    },
+    "post_edit": {
+      "command": "cd /Volumes/RK\\ Work/Ralph\\ Killhertz/XYNZ/XYNZ-SPAT/trajectory_hub && python -c \"from trajectory_hub.tools.change_logger import log_edit; import sys; log_edit(sys.argv[1] if len(sys.argv) > 1 else 'unknown', 'File edited by Claude')\"",
+      "description": "Log file changes"
+    },
+    "post_task": {
+      "command": "afplay /System/Library/Sounds/Glass.aiff && cd /Volumes/RK\\ Work/Ralph\\ Killhertz/XYNZ/XYNZ-SPAT/trajectory_hub && python -c \"from trajectory_hub.tools.change_logger import logger; print('\\n' + logger.generate_report())\"",
+      "description": "Play completion sound and show progress"
+    },
+    "on_error": {
+      "command": "afplay /System/Library/Sounds/Basso.aiff",
+      "description": "Play error sound"
+    }
+  },
+  "settings": {
+    "enable_auto_backup": true,
+    "enable_sound_notifications": true,
+    "enable_change_logging": true,
+    "backup_interval_minutes": 5
+  }
+}

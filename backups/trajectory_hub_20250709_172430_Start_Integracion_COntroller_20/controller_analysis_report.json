@@ -1,0 +1,39 @@
+{
+  "total_methods": 3,
+  "categories": {
+    "macros": 16,
+    "trayectorias": 7,
+    "distancias": 5,
+    "deformacion": 2,
+    "comportamiento": 3,
+    "presets": 6,
+    "info": 3,
+    "menu": 9,
+    "otros": 71
+  },
+  "delta_integration": {
+    "components_found": 2,
+    "total_components": 7
+  },
+  "missing_methods": [
+    "set_concentration",
+    "apply_concentration",
+    "set_concentration_factor",
+    "set_individual_movement",
+    "set_macro_rotation",
+    "set_manual_macro_rotation",
+    "set_individual_rotation",
+    "set_manual_individual_rotation",
+    "apply_orientation_preset",
+    "set_orientation_lfo",
+    "set_orientation_intensity"
+  ],
+  "obsolete_methods": [],
+  "recommendations": [
+    "A\u00f1adir m\u00e9todos para todos los componentes delta",
+    "Crear men\u00fa unificado para sistema de deltas",
+    "Eliminar funciones de debug/test",
+    "Mejorar organizaci\u00f3n por categor\u00edas",
+    "A\u00f1adir validaci\u00f3n de par\u00e1metros"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "PARALLEL_MODE": false,
+  "COMPONENTS_MIGRATED": [],
+  "CONCENTRATION_DUAL_MODE": true,
+  "SAFE_MODE": true,
+  "LOG_DELTAS": true,
+  "PHASE": 1,
+  "ROLLBACK_POINTS": [
+    {
+      "timestamp": "2025-07-05T16:11:35.460334",
+      "backup_dir": "phase1_backups_20250705_161135",
+      "component": "ConcentrationComponent"
+    },
+    {
+      "timestamp": "2025-07-05T16:16:31.403118",
+      "backup_dir": "phase1_real_backups_20250705_161631",
+      "component": "ConcentrationComponent",
+      "method": "update"
+    }
+  ],
+  "ARCHITECTURE": "update_based"
+}

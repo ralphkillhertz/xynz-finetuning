@@ -1,0 +1,13 @@
+{
+  "timestamp": "2025-07-05T16:22:16.553283",
+  "results": {
+    "original_mode_moves": "\u274c FAIL",
+    "original_mode_correct_direction": "\u274c FAIL",
+    "dual_mode_no_immediate_change": "\u274c FAIL",
+    "dual_mode_stores_delta": "\u274c FAIL",
+    "source_motion_integration": "\u274c FAIL - update() got an unexpected keyword argument 'current_time'"
+  },
+  "passed": 0,
+  "total": 5,
+  "success": false
+}

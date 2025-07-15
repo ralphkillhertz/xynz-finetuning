@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-07-05T16:28:43.261738",
+  "results": {
+    "original_moves": "\u274c FAIL",
+    "original_converges": "\u274c FAIL",
+    "original_speed": "\u2705 GRADUAL",
+    "dual_no_immediate_change": "\u2705 PASS",
+    "dual_stores_delta": "\u2705 PASS",
+    "factor_1_no_movement": "\u2705 PASS",
+    "source_integration": "\u2705 PASS"
+  },
+  "passed": 4,
+  "total": 6
+}

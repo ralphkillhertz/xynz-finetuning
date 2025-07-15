@@ -1,0 +1,36 @@
+{
+  "session_id": "20250709_sphere_fix_and_dna",
+  "timestamp": "2025-07-09T13:00:24.330711",
+  "project": "trajectory_hub",
+  "phase": "architectural_transformation",
+  "status": "Sphere implementado, ADN arquitectónico definido",
+  "trabajo_realizado": {
+    "sphere_3d": "Implementado en engine con espiral Fibonacci",
+    "project_dna": "Definido y guardado",
+    "nueva_arquitectura": "Documentada para futura implementación"
+  },
+  "⚠️ CRITICO_PROXIMA_SESION": {
+    "mensaje": "LEER PROJECT_DNA.json ANTES DE CUALQUIER CAMBIO",
+    "arquitectura": "RESPETAR SEPARACIÓN DE CAPAS",
+    "interactive_controller": "NO añadir lógica, solo UI",
+    "command_processor": "Toda la lógica va aquí"
+  },
+  "pendiente_proxima_sesion": [
+    "1. 🧪 Verificar sphere 3D funciona correctamente",
+    "2. 🚨 CRÍTICO: Implementar servidor MCP",
+    "3. 🏗️ Iniciar refactorización a nueva arquitectura",
+    "4. 📋 Crear CommandProcessor unificado",
+    "5. ⏱️ Implementar TimelineEngine"
+  ],
+  "comandos_utiles": {
+    "test_sphere": "python main.py --interactive → crear macro → sphere",
+    "ver_dna": "cat PROJECT_DNA.json",
+    "iniciar_refactor": "python start_architectural_refactor.py"
+  },
+  "notas_arquitectonicas": [
+    "La nueva arquitectura es EVENT-DRIVEN con CAPA SEMÁNTICA",
+    "InteractiveController debe reducirse de 122 a ~25 métodos",
+    "TODO pasa por CommandProcessor (IA, Gestos, CLI)",
+    "Separación estricta: UI ≠ Lógica ≠ Ejecución"
+  ]
+}

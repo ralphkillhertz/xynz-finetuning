@@ -1,0 +1,81 @@
+"""
+interactive_controller.py - Controlador principal del sistema interactivo (CORREGIDO)
+"""
+
+import os
+import sys
+from typing import Dict, List, Optional, Set, Tuple
+
+import asyncio
+import numpy as np
+import time
+import logging
+from typing import Dict, List, Optional
+
+# Imports principales con manejo de errores mejorado
+try:
+    # Intentar importar desde la estructura esperada del proyecto
+    from trajectory_hub.presets.artistic_presets import (
+        ARTISTIC_PRESETS, 
+        TRAJECTORY_FUNCTIONS,
+        TEMPORAL_COMPOSITIONS,
+        STYLE_CONFIGS
+    )
+except ImportError as e:
+    # Si falla, usar definiciones mínimas de respaldo
+    logging.warning(f"No se pudieron importar presets artísticos: {e}")
+    
+    ARTISTIC_PRESETS = {
+        "Demo Básico": {
+            "description": "Configuración básica para pruebas",
+            "macros": [{"name": "Grupo_Demo", "sources": 10, "behavior": "flock", "formation": "circle"}],
+            "trajectories": {"Grupo_Demo": "circle"},
+            "distances": {"Grupo_Demo": "personal"},
+            "deformations": {"Grupo_Demo": [("breathing", 4.0, 1.0)]},
+            "interactions": []
+        }
+    }
+    
+    TRAJECTORY_FUNCTIONS = {
+        "circle": lambda t: np.array([5*np.cos(t*0.3), 5*np.sin(t*0.3), 0]),
+        "spiral": lambda t: np.array([(3+0.1*t)*np.cos(t*0.5), (3+0.1*t)*np.sin(t*0.5), 0.2*t])
+    }
+    
+    TEMPORAL_COMPOSITIONS = {
+        "Demo Simple": {
+            "description": "Composición de demostración",
+            "duration": "2 minutos",
+            "dynamics": "Suave",
+            "timeline": []
+        }
+    }
+    
+    STYLE_CONFIGS = {
+        "Demo": {
+            "behaviors": ["flock", "rigid"],
+            "formations": ["circle", "line"],
+            "trajectories": ["circle", "spiral"],
+            "source_range": {"simple": (5, 15), "medium": (10, 25), "complex": (20, 50)},
+            "preferred_distances": ["personal", "social"],
+            "deformations": ["breathing"]
+        }
+    }
+
+# Imports del núcleo del sistema
+try:
+    from trajectory_hub import EnhancedTrajectoryEngine, SpatOSCBridge, OSCTarget
+    from trajectory_hub.core import (
+        TrajectoryMovementMode, TrajectoryDisplacementMode,
+        CompositeDeformer, BlendMode
+    )
+    from trajectory_hub.core.distance_controller import TrajectoryDistanceAdjuster, DistanceController
+except ImportError as e:
+    logging.error(f"Error importando componentes del núcleo: {e}")
+    raise
+
+# Configuración de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class

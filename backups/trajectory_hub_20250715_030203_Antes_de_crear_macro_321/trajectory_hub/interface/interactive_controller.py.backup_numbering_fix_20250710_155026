@@ -1,0 +1,768 @@
+"""
+Interactive Controller - Interfaz CLI simplificada
+Versión 2.0 - Arquitectura Orquestador
+"""
+import logging
+from typing import Optional, Dict, Any
+from ..control import CommandProcessor, SemanticCommand, IntentType, CLIInterface
+from ..core.enhanced_trajectory_engine import EnhancedTrajectoryEngine
+from ..core.spat_osc_bridge import SpatOSCBridge, OSCTarget
+
+
+logger = logging.getLogger(__name__)
+
+
+class InteractiveController:
+    """
+    Controlador interactivo simplificado.
+    Solo maneja navegación de menús y delega toda la lógica al CommandProcessor.
+    """
+    
+    def __init__(self, engine: EnhancedTrajectoryEngine):
+        self.engine = engine
+        self.engine.start()  # Iniciar loop
+        self.command_processor = CommandProcessor(self.engine)
+        self.ui = CLIInterface()
+        self.current_menu = "main"
+        self.selected_macro = None
+        
+        # Estado de sesión
+        self.session_active = True
+        self.command_history = []
+        
+        logger.info("InteractiveController v2.0 inicializado")
+    
+    # ========== NAVEGACIÓN PRINCIPAL ==========
+    
+    def run(self):
+        """Loop principal del controlador"""
+        self.ui.clear_screen()
+        self.ui.show_header("TRAJECTORY HUB - Control Interactivo v2.0")
+        
+        while self.session_active:
+            try:
+                self._show_current_menu()
+                choice = self.ui.get_input().lower()
+                
+                if choice == 'q':
+                    if self._confirm_exit():
+                        break
+                elif choice == 'b':
+                    self._navigate_back()
+                else:
+                    self._process_choice(choice)
+                    
+            except KeyboardInterrupt:
+                if self._confirm_exit():
+                    break
+            except Exception as e:
+                logger.error(f"Error en loop principal: {e}")
+                self.ui.show_error(f"Error inesperado: {str(e)}")
+    
+    def _show_current_menu(self):
+        """Muestra el menú actual"""
+        menu_handlers = {
+            "main": self._show_main_menu,
+            "movement": self._show_movement_menu,
+            "delta": self._show_delta_menu,
+            "modulation": self._show_modulation_menu,
+            "presets": self._show_presets_menu,
+            "system": self._show_system_menu
+        }
+        
+        if self.current_menu in menu_handlers:
+            menu_handlers[self.current_menu]()
+        else:
+            self.ui.show_error(f"Menú desconocido: {self.current_menu}")
+            self.current_menu = "main"
+    
+    def _navigate_back(self):
+        """Navega al menú anterior"""
+        nav_map = {
+            "movement": "main",
+            "delta": "main",
+            "modulation": "main",
+            "presets": "main",
+            "system": "main"
+        }
+        self.current_menu = nav_map.get(self.current_menu, "main")
+    
+    def _process_choice(self, choice: str):
+        """Procesa la elección del usuario según el menú actual"""
+        processors = {
+            "main": self._process_main_choice,
+            "movement": self._process_movement_choice,
+            "delta": self._process_delta_choice,
+            "modulation": self._process_modulation_choice,
+            "presets": self._process_presets_choice,
+            "system": self._process_system_choice
+        }
+        
+        if self.current_menu in processors:
+            processors[self.current_menu](choice)
+    
+    # ========== MENÚS ==========
+    
+    def _show_main_menu(self):
+        """Menú principal"""
+        options = [
+            ("1", "🎯 Crear Macro/Grupo"),
+            ("2", "🌀 Sistema de Movimiento (Deltas)"),
+            ("3", "🎵 Modulador 3D"),
+            ("4", "🎨 Presets Artísticos"),
+            ("4", "📊 Gestión de Macros"),
+            ("6", "ℹ️  Sistema e Información"),
+            ("-", ""),
+            ("q", "Salir")
+        ]
+        
+        self.ui.show_menu("MENÚ PRINCIPAL", options)
+        
+        if self.selected_macro:
+            self.ui.show_info(f"Macro activo: {self.selected_macro}")
+    
+    def _show_movement_menu(self):
+        """Menú del sistema de movimiento"""
+        options = [
+            ("1", "📍 Concentración/Dispersión"),
+            ("2", "🔄 Trayectorias Macro"),
+            ("3", "🎯 Trayectorias Individuales"),
+            ("4", "🌀 Rotaciones Macro"),
+            ("5", "🔸 Rotaciones Individuales"),
+            ("6", "🏃 Modos de Movimiento"),
+            ("-", ""),
+            ("b", "Volver"),
+            ("q", "Salir")
+        ]
+        
+        self.ui.show_menu("SISTEMA DE MOVIMIENTO", options)
+    
+    def _show_delta_menu(self):
+        """Menú específico del sistema de deltas"""
+        options = [
+            ("== COMPONENTES DELTA ==", ""),
+            ("1", "ConcentrationComponent - Agrupar/Dispersar"),
+            ("2", "MacroTrajectory - Trayectorias de grupo"),
+            ("3", "IndividualTrajectory - Trayectorias por fuente"),
+            ("4", "MacroRotation - Rotación algorítmica de grupo"),
+            ("5", "ManualMacroRotation - Rotación manual de grupo"),
+            ("6", "IndividualRotation - Rotación algorítmica individual"),
+            ("7", "ManualIndividualRotation - Rotación manual individual"),
+            ("-", ""),
+            ("b", "Volver"),
+            ("q", "Salir")
+        ]
+        
+        self.ui.show_menu("SISTEMA DE DELTAS", options)
+    
+    def _show_modulation_menu(self):
+        """Menú del modulador 3D"""
+        options = [
+            ("1", "🎭 Aplicar Preset de Modulación"),
+            ("2", "🎚️ Ajustar Intensidad Global"),
+            ("3", "⚡ Configurar Velocidad (LFO)"),
+            ("4", "🔀 Interpolar entre Presets"),
+            ("5", "🛑 Desactivar Modulación"),
+            ("-", ""),
+            ("b", "Volver"),
+            ("q", "Salir")
+        ]
+        
+        self.ui.show_menu("MODULADOR 3D", options)
+    
+    def _show_presets_menu(self):
+        """Menú de presets artísticos"""
+        options = [
+            ("1", "🌌 Galaxia Rotante"),
+            ("2", "🌊 Océano Respirante"),
+            ("3", "⚡ Enjambre Nervioso"),
+            ("4", "🌀 Vórtice Hipnótico"),
+            ("5", "🎭 Composición Aleatoria"),
+            ("-", ""),
+            ("b", "Volver"),
+            ("q", "Salir")
+        ]
+        
+        self.ui.show_menu("PRESETS ARTÍSTICOS", options)
+    
+    def _show_system_menu(self):
+        """Menú de sistema e información"""
+        options = [
+            ("1", "📊 Estado del Sistema"),
+            ("2", "📋 Listar Macros Activos"),
+            ("3", "🔍 Información de Macro"),
+            ("4", "📡 Estado OSC"),
+            ("5", "💾 Guardar Configuración"),
+            ("6", "📂 Cargar Configuración"),
+            ("7", "🗑️ Eliminar Macro"),
+            ("-", ""),
+            ("b", "Volver"),
+            ("q", "Salir")
+        ]
+        
+        self.ui.show_menu("SISTEMA E INFORMACIÓN", options)
+    
+    # ========== PROCESADORES DE OPCIONES ==========
+    
+    def _show_macros_menu(self):
+        """Menú de gestión de macros"""
+        options = [
+            ("1", "📋 Listar Macros Activos"),
+            ("2", "✅ Seleccionar Macro Activo"),
+            ("3", "🔍 Información Detallada"),
+            ("4", "🗑️ Eliminar Macro"),
+            ("-", ""),
+            ("b", "Volver"),
+            ("q", "Salir")
+        ]
+        
+        # Mostrar macro seleccionado actual
+        if self.selected_macro:
+            macro_info = self.engine.select_macro(self.selected_macro)
+            if macro_info:
+                print(f"\n  Macro activo: {macro_info['key'].split('_')[2]} ({macro_info['num_sources']} sources)")
+        
+        self.ui.show_menu("GESTIÓN DE MACROS", options)
+
+    def _process_macros_choice(self, choice: str):
+        """Procesa las opciones del menú de macros"""
+        if choice == "1":
+            self._list_active_macros()
+        elif choice == "2":
+            self._select_macro()
+        elif choice == "3":
+            self._show_macro_info()
+        elif choice == "4":
+            self._delete_macro()
+
+    def _process_main_choice(self, choice: str):
+        """Procesa opciones del menú principal"""
+        if choice == "1":
+            self._create_macro_wizard()
+        elif choice == "2":
+            self.current_menu = "delta"
+        elif choice == "3":
+            self.current_menu = "modulation"
+        elif choice == "4":
+            self.current_menu = "presets"
+        elif choice == "4":
+            self.current_menu = "macros"
+        elif choice == "6":
+            self.current_menu = "system"
+    
+    def _process_movement_choice(self, choice: str):
+        """Procesa opciones del menú de movimiento"""
+        if not self._ensure_macro_selected():
+            return
+            
+        commands = {
+            "1": self._create_concentration_command,
+            "2": self._create_macro_trajectory_command,
+            "3": self._create_individual_trajectory_command,
+            "4": self._create_macro_rotation_command,
+            "5": self._create_individual_rotation_command,
+            "6": self._configure_movement_modes
+        }
+        
+        if choice in commands:
+            command = commands[choice]()
+            if command:
+                self._execute_command(command)
+    
+    def _process_delta_choice(self, choice: str):
+        """Procesa opciones del menú delta"""
+        # Redirige a las funciones específicas del menú movement
+        self.current_menu = "movement"
+        mapping = {
+            "1": "1",  # Concentration
+            "2": "2",  # MacroTrajectory
+            "3": "3",  # IndividualTrajectory
+            "4": "4",  # MacroRotation
+            "5": "4",  # ManualMacroRotation (mismo menú)
+            "6": "5",  # IndividualRotation
+            "7": "5"   # ManualIndividualRotation (mismo menú)
+        }
+        if choice in mapping:
+            self._process_movement_choice(mapping[choice])
+    
+    def _process_modulation_choice(self, choice: str):
+        """Procesa opciones del menú de modulación"""
+        if not self._ensure_macro_selected():
+            return
+            
+        if choice == "1":
+            self._apply_modulation_preset()
+        elif choice == "2":
+            self._adjust_modulation_intensity()
+        elif choice == "3":
+            self._configure_modulation_lfo()
+        elif choice == "4":
+            self._interpolate_modulation_presets()
+        elif choice == "5":
+            self._toggle_modulation()
+    
+    def _process_presets_choice(self, choice: str):
+        """Procesa opciones del menú de presets"""
+        preset_map = {
+            "1": "rotating_galaxy",
+            "2": "breathing_ocean",
+            "3": "nervous_swarm",
+            "4": "hypnotic_vortex",
+            "5": "random_composition"
+        }
+        
+        if choice in preset_map:
+            command = SemanticCommand(
+                intent=IntentType.LOAD_PRESET,
+                parameters={"preset_name": preset_map[choice]},
+                source="interactive_cli"
+            )
+            self._execute_command(command)
+    
+    def _process_system_choice(self, choice: str):
+        """Procesa opciones del menú de sistema"""
+        if choice == "1":
+            self._show_system_status()
+        elif choice == "2":
+            self._list_active_macros()
+        elif choice == "3":
+            self._show_macro_info()
+        elif choice == "4":
+            self._show_osc_status()
+        elif choice == "5":
+            self._save_configuration()
+        elif choice == "6":
+            self._load_configuration()
+    
+    # ========== WIZARDS DE CREACIÓN ==========
+    
+    def _create_macro_wizard(self):
+        """Wizard para crear un macro"""
+        config = self.ui.get_macro_config()
+        if not config:
+            return
+            
+        command = SemanticCommand(
+            intent=IntentType.CREATE_MACRO,
+            parameters=config,
+            source="interactive_cli"
+        )
+        
+        result = self._execute_command(command)
+        if result.success:
+            self.selected_macro = config["name"]
+            self.ui.show_success(f"Macro '{config['name']}' seleccionado")
+    
+    def _create_concentration_command(self) -> Optional[SemanticCommand]:
+        """Crea comando de concentración"""
+        factor = self.ui.get_numeric_input(
+            "Factor de concentración (0=disperso, 1=concentrado): ",
+            0.0, 1.0
+        )
+        
+        if factor is None:
+            return None
+            
+        return SemanticCommand(
+            intent=IntentType.APPLY_CONCENTRATION,
+            parameters={
+                "target": self.selected_macro,
+                "factor": factor
+            },
+            source="interactive_cli"
+        )
+    
+    def _create_macro_trajectory_command(self) -> Optional[SemanticCommand]:
+        """Crea comando de trayectoria macro"""
+        config = self.ui.get_movement_config()
+        if not config:
+            return None
+            
+        return SemanticCommand(
+            intent=IntentType.SET_TRAJECTORY,
+            parameters={
+                "target": self.selected_macro,
+                "trajectory_type": config["trajectory_type"],
+                "trajectory_params": {"speed": config["speed"]}
+            },
+            source="interactive_cli"
+        )
+    
+    def _create_individual_trajectory_command(self) -> Optional[SemanticCommand]:
+        """Crea comando de trayectorias individuales"""
+        self.ui.show_info("Configuración de trayectorias individuales")
+        
+        modes = [
+            "Todas iguales",
+            "Formas mixtas",
+            "Velocidades diferentes",
+            "Configuración completa"
+        ]
+        
+        mode_idx = self.ui.get_choice_from_list(modes, "Modo de configuración:")
+        if mode_idx is None:
+            return None
+            
+        # Simplificado por ahora
+        return SemanticCommand(
+            intent=IntentType.SET_INDIVIDUAL_MOVEMENT,
+            parameters={
+                "target": self.selected_macro,
+                "mode": modes[mode_idx],
+                "config": {}  # TODO: Expandir según modo
+            },
+            source="interactive_cli"
+        )
+    
+    def _create_macro_rotation_command(self) -> Optional[SemanticCommand]:
+        """Crea comando de rotación macro"""
+        self.ui.show_info("Configuración de rotación de macro")
+        
+        rotation_type = self.ui.get_choice_from_list(
+            ["Algorítmica (continua)", "Manual (posición específica)"],
+            "Tipo de rotación:"
+        )
+        
+        if rotation_type is None:
+            return None
+            
+        if rotation_type == 0:  # Algorítmica
+            speed_x = self.ui.get_numeric_input("Velocidad X (rad/s): ", -5, 5) or 0
+            speed_y = self.ui.get_numeric_input("Velocidad Y (rad/s): ", -5, 5) or 0
+            speed_z = self.ui.get_numeric_input("Velocidad Z (rad/s): ", -5, 5) or 0
+            
+            return SemanticCommand(
+                intent=IntentType.APPLY_ROTATION,
+                parameters={
+                    "target": self.selected_macro,
+                    "rotation_params": {
+                        "type": "algorithmic",
+                        "speed_x": speed_x,
+                        "speed_y": speed_y,
+                        "speed_z": speed_z
+                    }
+                },
+                source="interactive_cli"
+            )
+        elif choice == "7":
+            self._delete_macro()
+        else:  # Manual
+            yaw = self.ui.get_numeric_input("Yaw (grados): ", -180, 180) or 0
+            pitch = self.ui.get_numeric_input("Pitch (grados): ", -90, 90) or 0
+            roll = self.ui.get_numeric_input("Roll (grados): ", -180, 180) or 0
+            speed = self.ui.get_numeric_input("Velocidad interpolación (0.1-1): ", 0.1, 1) or 0.5
+            
+            import math
+            return SemanticCommand(
+                intent=IntentType.APPLY_ROTATION,
+                parameters={
+                    "target": self.selected_macro,
+                    "rotation_params": {
+                        "type": "manual",
+                        "yaw": math.radians(yaw),
+                        "pitch": math.radians(pitch),
+                        "roll": math.radians(roll),
+                        "speed": speed
+                    }
+                },
+                source="interactive_cli"
+            )
+    
+    def _create_individual_rotation_command(self) -> Optional[SemanticCommand]:
+        """Crea comando de rotación individual"""
+        # TODO: Implementar similar a macro rotation pero para fuentes individuales
+        self.ui.show_warning("Rotación individual en desarrollo")
+        return None
+    
+    def _configure_movement_modes(self):
+        """Configura modos de movimiento"""
+        self.ui.show_info("Modos de movimiento")
+        modes = ["stop", "fix", "random", "vibration", "spin"]
+        mode_idx = self.ui.get_choice_from_list(modes, "Seleccione modo:")
+        
+        if mode_idx is not None:
+            self.ui.show_success(f"Modo '{modes[mode_idx]}' aplicado")
+            # TODO: Implementar comando real
+    
+    # ========== MODULACIÓN 3D ==========
+    
+    def _apply_modulation_preset(self):
+        """Aplica preset de modulación"""
+        presets = [
+            "respiración_suave",
+            "nervioso_aleatorio",
+            "espiral_cósmica",
+            "lissajous_complejo",
+            "péndulo_hipnótico"
+        ]
+        
+        preset_idx = self.ui.get_choice_from_list(presets, "Seleccione preset:")
+        if preset_idx is None:
+            return
+            
+        command = SemanticCommand(
+            intent=IntentType.APPLY_MODULATION,
+            parameters={
+                "target": self.selected_macro,
+                "preset": presets[preset_idx]
+            },
+            source="interactive_cli"
+        )
+        
+        self._execute_command(command)
+    
+    def _adjust_modulation_intensity(self):
+        """Ajusta intensidad de modulación"""
+        intensity = self.ui.get_numeric_input(
+            "Intensidad (0-100%): ", 0, 100
+        )
+        
+        if intensity is not None:
+            command = SemanticCommand(
+                intent=IntentType.SET_MODULATION_INTENSITY,
+                parameters={
+                    "target": self.selected_macro,
+                    "intensity": intensity / 100.0
+                },
+                source="interactive_cli"
+            )
+            self._execute_command(command)
+    
+    def _configure_modulation_lfo(self):
+        """Configura LFO de modulación"""
+        lfo = self.ui.get_numeric_input(
+            "Frecuencia LFO (Hz): ", 0.1, 10
+        )
+        
+        if lfo is not None:
+            # TODO: Crear comando apropiado
+            self.ui.show_success(f"LFO configurado a {lfo} Hz")
+    
+    def _interpolate_modulation_presets(self):
+        """Interpola entre presets de modulación"""
+        self.ui.show_warning("Interpolación de presets en desarrollo")
+    
+    def _toggle_modulation(self):
+        """Activa/desactiva modulación"""
+        # TODO: Implementar toggle real
+        self.ui.show_success("Modulación toggle")
+    
+    # ========== UTILIDADES ==========
+    
+    def _execute_command(self, command: SemanticCommand) -> Any:
+        """Ejecuta un comando y muestra el resultado"""
+        self.command_history.append(command)
+        
+        result = self.command_processor.execute(command)
+        
+        if result.success:
+            self.ui.show_success(result.message)
+        else:
+            self.ui.show_error(result.message)
+            if result.error:
+                logger.error(f"Error detalle: {result.error}")
+                
+        return result
+    
+    def _ensure_macro_selected(self) -> bool:
+        """Verifica que haya un macro seleccionado"""
+        if not self.selected_macro:
+            self.ui.show_warning("Primero debe crear o seleccionar un macro")
+            
+            # Ofrecer crear uno rápido
+            if self.ui.get_yes_no("¿Desea crear un macro ahora?"):
+                self._create_macro_wizard()
+                
+        return self.selected_macro is not None
+    
+    def _confirm_exit(self) -> bool:
+        """Confirma salida del programa"""
+        return self.ui.get_yes_no("¿Está seguro que desea salir?")
+    
+    # ========== INFORMACIÓN DEL SISTEMA ==========
+    
+    def _show_system_status(self):
+        """Muestra estado del sistema"""
+        self.ui.show_header("ESTADO DEL SISTEMA")
+        
+        info = [
+            f"Motor: {self.engine.__class__.__name__}",
+            f"Fuentes máximas: {self.engine.max_sources}",
+            f"FPS objetivo: {self.engine.fps}",
+            f"Macros activos: {len(self.engine._macros)}",
+            f"Sistema de deltas: ✅ Activo",
+            f"Modulador 3D: {'✅ Activo' if hasattr(self.engine, 'enable_modulator') else '❌ Inactivo'}"
+        ]
+        
+        for line in info:
+            print(f"  {line}")
+            
+        self.ui.pause()
+    
+    def _list_active_macros(self):
+        """Lista macros activos usando engine.list_macros()"""
+        self.ui.show_header("MACROS ACTIVOS")
+        
+        macros = self.engine.list_macros()
+        
+        if not macros:
+            self.ui.show_info("No hay macros activos")
+        else:
+            print(f"\n  Total: {len(macros)} macros\n")
+            for i, macro in enumerate(macros):
+                status = "✅" if macro['key'] == self.selected_macro else "  "
+                print(f"  {status} [{i+1}] {macro['name']}")
+                print(f"       Sources: {macro['num_sources']} | Formation: {macro['formation']}")
+                
+        self.ui.pause()
+    
+    def _delete_macro(self):
+        """Elimina un macro seleccionado"""
+        self.ui.show_header("ELIMINAR MACRO")
+        
+        # Obtener lista de macros
+        macros = self.engine.list_macros()
+        
+        if not macros:
+            self.ui.show_info("No hay macros para eliminar")
+            self.ui.pause()
+            return
+        
+        # Mostrar macros disponibles
+        print("\n  Macros disponibles:\n")
+        for i, macro in enumerate(macros):
+            selected = "→" if macro['key'] == self.selected_macro else " "
+            print(f"  {selected} [{i+1}] {macro['name']} ({macro['num_sources']} sources)")
+        
+        print("\n  [0] Cancelar")
+        print("\n  Ingrese el número del macro a eliminar")
+        
+        # Solicitar selección
+        try:
+            choice = input("\n  Selección: ").strip()
+            
+            if choice == "0":
+                self.ui.show_info("Eliminación cancelada")
+                self.ui.pause()
+                return
+            
+            idx = int(choice) - 1
+            if 0 <= idx < len(macros):
+                macro_to_delete = macros[idx]
+                
+                # Confirmar eliminación
+                print(f"\n  ⚠️  CONFIRMAR ELIMINACIÓN")
+                print(f"\n  Macro: {macro_to_delete['name']}")
+                print(f"  Sources: {macro_to_delete['num_sources']}")
+                print(f"  IDs: {macro_to_delete['source_ids'][:5]}{'...' if len(macro_to_delete['source_ids']) > 5 else ''}")
+                
+                confirm = input("\n  ¿Confirmar eliminación? (s/n): ").strip().lower()
+                
+                if confirm == 's':
+                    # Eliminar usando el engine
+                    if self.engine.delete_macro(macro_to_delete['key']):
+                        self.ui.show_success(f"Macro '{macro_to_delete['name']}' eliminado correctamente")
+                        
+                        # Si era el macro seleccionado, limpiar selección
+                        if self.selected_macro == macro_to_delete['key']:
+                            self.selected_macro = None
+                            self.ui.show_info("Selección de macro limpiada")
+                    else:
+                        self.ui.show_error("Error al eliminar el macro")
+                else:
+                    self.ui.show_info("Eliminación cancelada")
+            else:
+                self.ui.show_error("Número inválido")
+                
+        except ValueError:
+            self.ui.show_error("Entrada inválida - debe ser un número")
+        except Exception as e:
+            self.ui.show_error(f"Error: {str(e)}")
+        
+        self.ui.pause()
+
+# ========== PUNTO DE ENTRADA ==========
+
+def main():
+    """Punto de entrada principal"""
+    import sys
+    import os
+    
+    # Añadir path del proyecto
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    from trajectory_hub.core.enhanced_trajectory_engine import EnhancedTrajectoryEngine
+    from trajectory_hub.core.spat_osc_bridge import OSCTarget
+    
+    # Configurar logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Crear engine
+    print("🚀 Inicializando Trajectory Hub...")
+    engine = EnhancedTrajectoryEngine(
+        max_sources=100,
+        fps=60,
+        enable_modulator=True
+    )
+    
+    # Configurar OSC
+    target = OSCTarget(host="127.0.0.1", port=9000)
+    # Verificar que osc_bridge existe
+    if engine.osc_bridge is None:
+        from trajectory_hub.core.spat_osc_bridge import SpatOSCBridge
+        engine.osc_bridge = SpatOSCBridge()
+    # engine.osc_bridge.add_target(target)  # TEMPORALMENTE DESHABILITADO
+    
+    # Crear y ejecutar controlador
+    controller = InteractiveController(engine)
+    controller.run()
+    
+    print("\n👋 ¡Hasta luego!")
+
+
+if __name__ == "__main__":
+    main()
+    def _select_macro(self):
+        """Selecciona un macro activo"""
+        self.ui.show_header("SELECCIONAR MACRO ACTIVO")
+        
+        # Obtener lista de macros
+        macros = self.engine.list_macros()
+        
+        if not macros:
+            self.ui.show_info("No hay macros disponibles")
+            self.ui.pause()
+            return
+        
+        # Mostrar macros
+        print("\n  Macros disponibles:\n")
+        for i, macro in enumerate(macros):
+            current = "✅" if macro['key'] == self.selected_macro else "  "
+            print(f"  {current} [{i+1}] {macro['name']} ({macro['num_sources']} sources)")
+        
+        print(f"\n  Macro actual: {self.selected_macro if self.selected_macro else 'Ninguno'}")
+        print("\n  [0] Cancelar")
+        
+        try:
+            choice = input("\n  Seleccionar macro (número): ").strip()
+            
+            if choice == "0":
+                return
+            
+            idx = int(choice) - 1
+            if 0 <= idx < len(macros):
+                self.selected_macro = macros[idx]['key']
+                self.ui.show_success(f"Macro '{macros[idx]['name']}' seleccionado")
+            else:
+                self.ui.show_error("Número inválido")
+                
+        except ValueError:
+            self.ui.show_error("Entrada inválida")
+        except Exception as e:
+            self.ui.show_error(f"Error: {str(e)}")
+        
+        self.ui.pause()
+

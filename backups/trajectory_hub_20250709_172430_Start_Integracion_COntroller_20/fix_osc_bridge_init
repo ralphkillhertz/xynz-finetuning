@@ -1,0 +1,61 @@
+# 🔧 Fix: Inicializar osc_bridge en el engine
+# ⚡ Problema: osc_bridge es None
+
+print("🔧 Arreglando inicialización de osc_bridge...")
+
+# Verificar si el engine tiene osc_bridge
+engine_file = "trajectory_hub/core/enhanced_trajectory_engine.py"
+
+# Leer archivo
+with open(engine_file, 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# Buscar __init__ del engine
+if "self.osc_bridge = None" in content or "self.osc_bridge" not in content:
+    print("⚠️ osc_bridge no está inicializado correctamente")
+    
+    # Buscar el __init__ y añadir la inicialización
+    init_index = content.find("def __init__(")
+    if init_index != -1:
+        # Buscar donde inicializar (después de self.fps)
+        fps_index = content.find("self.fps = fps", init_index)
+        if fps_index != -1:
+            # Encontrar el final de esa línea
+            line_end = content.find("\n", fps_index)
+            
+            # Añadir inicialización del bridge
+            new_init = """
+        
+        # Sistema OSC
+        from .spat_osc_bridge import SpatOSCBridge
+        self.osc_bridge = SpatOSCBridge(
+            max_sources=self.max_sources,
+            update_rate=self.fps,
+            source_prefix="/source"
+        )"""
+            
+            content = content[:line_end] + new_init + content[line_end:]
+            
+            # Guardar
+            with open(engine_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            print("✅ osc_bridge inicializado en __init__")
+
+# También comentar la línea problemática temporalmente en el controller
+controller_file = "trajectory_hub/interface/interactive_controller.py"
+with open(controller_file, 'r', encoding='utf-8') as f:
+    controller_content = f.read()
+
+# Comentar las líneas de OSC por ahora
+controller_content = controller_content.replace(
+    "engine.osc_bridge.add_target(target)",
+    "# engine.osc_bridge.add_target(target)  # TODO: Verificar inicialización"
+)
+
+with open(controller_file, 'w', encoding='utf-8') as f:
+    f.write(controller_content)
+
+print("✅ Línea OSC comentada temporalmente en controller")
+print("\n🚀 Prueba de nuevo:")
+print("   python -m trajectory_hub.interface.interactive_controller")

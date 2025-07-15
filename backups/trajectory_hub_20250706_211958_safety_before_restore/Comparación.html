@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arquitectura de Componentes - Trajectory Hub</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .container {
+            max-width: 1200px;
+            width: 100%;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #00ff88;
+            margin-bottom: 40px;
+            text-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+        }
+        
+        .architectures {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        
+        .architecture {
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 30px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .architecture::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, #ff0066, #00ff88, #0066ff, #ff0066);
+            border-radius: 15px;
+            opacity: 0;
+            z-index: -1;
+            transition: opacity 0.3s;
+        }
+        
+        .architecture:hover::before {
+            opacity: 0.3;
+            animation: rotate 3s linear infinite;
+        }
+        
+        @keyframes rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .architecture h2 {
+            margin-top: 0;
+            margin-bottom: 20px;
+        }
+        
+        .problematic h2 {
+            color: #ff4444;
+        }
+        
+        .parallel h2 {
+            color: #00ff88;
+        }
+        
+        .component-flow {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .component {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            position: relative;
+            transition: all 0.3s;
+        }
+        
+        .component:hover {
+            transform: translateX(10px);
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        .problematic .component {
+            border-left: 4px solid #ff4444;
+        }
+        
+        .parallel .component {
+            border-left: 4px solid #00ff88;
+        }
+        
+        .arrow {
+            font-size: 24px;
+            color: #666;
+            text-align: center;
+            margin: 10px 0;
+        }
+        
+        .blocking {
+            color: #ff4444;
+            font-weight: bold;
+        }
+        
+        .delta {
+            color: #00ff88;
+            font-weight: bold;
+        }
+        
+        .problem {
+            background: rgba(255, 68, 68, 0.2);
+            border: 1px solid #ff4444;
+            border-radius: 8px;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        
+        .benefit {
+            background: rgba(0, 255, 136, 0.2);
+            border: 1px solid #00ff88;
+            border-radius: 8px;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        
+        .summary {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 30px;
+            text-align: center;
+            border: 2px solid #00ff88;
+        }
+        
+        .code-example {
+            background: #000;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        
+        .highlight {
+            color: #00ff88;
+        }
+        
+        @media (max-width: 768px) {
+            .architectures {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏗️ Arquitectura de Componentes - Trajectory Hub</h1>
+        
+        <div class="architectures">
+            <div class="architecture problematic">
+                <h2>❌ Arquitectura Actual (Problemática)</h2>
+                
+                <div class="component-flow">
+                    <h3>Flujo Secuencial con Bloqueos</h3>
+                    
+                    <div class="component">
+                        <strong>SourceMotion.update()</strong>
+                    </div>
+                    
+                    <div class="arrow">↓</div>
+                    
+                    <div class="component">
+                        <strong>MS Trajectory</strong><br>
+                        <span class="blocking">if IS enabled: return ❌</span>
+                    </div>
+                    
+                    <div class="arrow">↓</div>
+                    
+                    <div class="component">
+                        <strong>IS Trajectory</strong><br>
+                        <span class="blocking">Bloquea MS Rotation ❌</span>
+                    </div>
+                    
+                    <div class="arrow">↓</div>
+                    
+                    <div class="component">
+                        <strong>Concentration</strong><br>
+                        <span class="blocking">Solo funciona si IS activa ❌</span>
+                    </div>
+                    
+                    <div class="arrow">↓</div>
+                    
+                    <div class="component">
+                        <strong>MS Rotation</strong><br>
+                        <span class="blocking">Bloqueada por IS ❌</span>
+                    </div>
+                </div>
+                
+                <div class="problem">
+                    <strong>Problemas:</strong>
+                    <ul>
+                        <li>Componentes se bloquean mutuamente</li>
+                        <li>Dependencias incorrectas (Concentración → IS)</li>
+                        <li>No se pueden combinar efectos</li>
+                        <li>Comportamiento impredecible</li>
+                    </ul>
+                </div>
+                
+                <div class="code-example">
+                    <span style="color: #ff4444;">// Problema: sobrescritura</span><br>
+                    position = ms_trajectory.position<br>
+                    position = is_trajectory.position <span style="color: #ff4444;">// MS perdido!</span>
+                </div>
+            </div>
+            
+            <div class="architecture parallel">
+                <h2>✅ Arquitectura Paralela (Propuesta)</h2>
+                
+                <div class="component-flow">
+                    <h3>Cálculo Paralelo de Deltas</h3>
+                    
+                    <div class="component">
+                        <strong>SourceMotion.update()</strong>
+                    </div>
+                    
+                    <div class="arrow">↓ → → →</div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div class="component">
+                            <strong>MS Trajectory</strong><br>
+                            <span class="delta">→ Δ position_ms</span>
+                        </div>
+                        
+                        <div class="component">
+                            <strong>IS Trajectory</strong><br>
+                            <span class="delta">→ Δ position_is</span>
+                        </div>
+                        
+                        <div class="component">
+                            <strong>Concentration</strong><br>
+                            <span class="delta">→ Δ position_conc</span>
+                        </div>
+                        
+                        <div class="component">
+                            <strong>MS Rotation</strong><br>
+                            <span class="delta">→ Δ orientation_ms</span>
+                        </div>
+                    </div>
+                    
+                    <div class="arrow">↓ ← ← ←</div>
+                    
+                    <div class="component" style="background: rgba(0, 255, 136, 0.2);">
+                        <strong>SUMA FINAL</strong><br>
+                        position += Σ(Δ position)<br>
+                        orientation += Σ(Δ orientation)
+                    </div>
+                </div>
+                
+                <div class="benefit">
+                    <strong>Beneficios:</strong>
+                    <ul>
+                        <li>Componentes totalmente independientes</li>
+                        <li>No hay bloqueos ni dependencias</li>
+                        <li>Todos los efectos se suman</li>
+                        <li>Comportamiento predecible y modular</li>
+                    </ul>
+                </div>
+                
+                <div class="code-example">
+                    <span class="highlight">// Solución: acumulación de deltas</span><br>
+                    deltas = []<br>
+                    deltas.push(ms_trajectory.delta)<br>
+                    deltas.push(is_trajectory.delta)<br>
+                    deltas.push(concentration.delta)<br>
+                    position += sum(deltas) <span class="highlight">// ¡Todo se suma!</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="summary">
+            <h2>🚀 Implementación</h2>
+            <p>La arquitectura paralela permite que todos los movimientos del proyecto funcionen de forma independiente y se combinen sin conflictos:</p>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0;">
+                <div class="benefit" style="margin: 0;">MS Trayectorias</div>
+                <div class="benefit" style="margin: 0;">IS Trayectorias</div>
+                <div class="benefit" style="margin: 0;">Modulación 3D</div>
+                <div class="benefit" style="margin: 0;">Rotación MS/IS</div>
+                <div class="benefit" style="margin: 0;">Rotación Algorítmica</div>
+                <div class="benefit" style="margin: 0;">Concentración</div>
+            </div>
+            <p><strong>Todos pueden activarse simultáneamente sin interferencias</strong></p>
+        </div>
+    </div>
+    
+    <script>
+        // Animación de flujo de datos
+        setInterval(() => {
+            const components = document.querySelectorAll('.parallel .component');
+            components.forEach((comp, index) => {
+                setTimeout(() => {
+                    comp.style.transform = 'scale(1.05)';
+                    comp.style.boxShadow = '0 0 20px rgba(0, 255, 136, 0.5)';
+                    setTimeout(() => {
+                        comp.style.transform = 'scale(1)';
+                        comp.style.boxShadow = 'none';
+                    }, 300);
+                }, index * 100);
+            });
+        }, 3000);
+    </script>
+</body>
+</html>
