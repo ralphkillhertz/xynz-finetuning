@@ -17,7 +17,7 @@ mkdir -p /workspace/xynz-finetuning/logs
 mkdir -p /workspace/cache
 
 # Cambiar al directorio de trabajo
-cd /workspace/xynz-finetuning/phase2_fine_tuning
+cd /workspace/xynz-finetuning/trajectory_hub_v2/phase2_fine_tuning
 
 # Verificar GPU
 echo -e "\n📊 Información de GPU:"
@@ -56,11 +56,11 @@ python scripts/train_simple.py 2>&1 | tee logs/training_$(date +%Y%m%d_%H%M%S).l
 # Verificar resultado
 if [ $? -eq 0 ]; then
     echo -e "\n✅ Entrenamiento completado exitosamente"
-    echo "Modelo guardado en: /workspace/xynz-finetuning/models/deepseek-xynz-lora"
+    echo "Modelo guardado en: /workspace/xynz-finetuning/trajectory_hub_v2/phase2_fine_tuning/models/deepseek-xynz-lora"
     
     # Mostrar tamaño del modelo
     echo -e "\n📦 Tamaño del modelo:"
-    du -sh /workspace/xynz-finetuning/models/deepseek-xynz-lora/
+    du -sh /workspace/xynz-finetuning/trajectory_hub_v2/phase2_fine_tuning/models/deepseek-xynz-lora/
 else
     echo -e "\n❌ Error durante el entrenamiento"
     echo "Revisa los logs en: logs/"

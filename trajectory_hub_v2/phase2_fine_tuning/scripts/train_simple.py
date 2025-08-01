@@ -71,7 +71,7 @@ print(f"Parámetros entrenables: {model.print_trainable_parameters()}")
 
 # Cargar dataset
 print("\n📚 Cargando dataset XYNZ...")
-data_path = "/workspace/xynz-finetuning/phase2_fine_tuning/dataset/processed/alpaca"
+data_path = "/workspace/xynz-finetuning/trajectory_hub_v2/phase2_fine_tuning/dataset/processed/alpaca"
 
 # Función simple para cargar JSONL
 def load_jsonl(file_path):
@@ -134,7 +134,7 @@ data_collator = DataCollatorForLanguageModeling(
 # Configurar argumentos de entrenamiento
 print("\n🎯 Configurando entrenamiento...")
 training_args = TrainingArguments(
-    output_dir="/workspace/xynz-finetuning/models/deepseek-xynz-lora",
+    output_dir="/workspace/xynz-finetuning/trajectory_hub_v2/phase2_fine_tuning/models/deepseek-xynz-lora",
     num_train_epochs=3,
     per_device_train_batch_size=2,
     per_device_eval_batch_size=2,
