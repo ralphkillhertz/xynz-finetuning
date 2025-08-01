@@ -118,7 +118,7 @@ Eres un experto en audio espacializado y sistemas SPAT. Respondes de forma preci
     )
 
     # Labels = input_ids para causal LM
-    model_inputs["labels"] = model_inputs["input_ids"].copy()
+    model_inputs["labels"] = model_inputs["input_ids"][:]
 
     return model_inputs
 
